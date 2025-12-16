@@ -1,0 +1,79 @@
+/**
+ * 类型定义统一导出
+ */
+
+// Gemini API 相关类型
+export type {
+  GeminiRequest,
+  GeminiContent,
+  GeminiPart,
+  GeminiTextPart,
+  GeminiInlineDataPart,
+  GenerationConfig,
+  SafetySetting,
+  HarmCategory,
+  HarmBlockThreshold,
+  GeminiResponse,
+  GeminiCandidate,
+  SafetyRating,
+  UsageMetadata,
+  StreamChunk,
+  ThinkingConfig,
+  ImageConfig,
+} from './gemini';
+
+export {
+  HARM_CATEGORIES,
+  HARM_BLOCK_THRESHOLDS,
+  DEFAULT_GENERATION_CONFIG,
+} from './gemini';
+
+// 应用数据模型类型
+export type {
+  Conversation,
+  Message,
+  Attachment,
+  AppSettings,
+  ThemeMode,
+  ApiConfig,
+  ModelInfo,
+  ExportData,
+  ExportDataV2,
+  ImportData,
+  // 模型管理相关类型
+  ApiProvider,
+  ThinkingLevel,
+  MediaResolution,
+  ModelCapabilities,
+  ModelAdvancedConfig,
+  ModelConfig,
+  ModelManagerState,
+} from './models';
+
+export {
+  GEMINI_MODELS,
+  DEFAULT_API_ENDPOINT,
+  DEFAULT_MODEL,
+  DEFAULT_APP_SETTINGS,
+  IMAGE_SIZE_LIMIT,
+  DOCUMENT_SIZE_LIMIT,
+  SUPPORTED_IMAGE_TYPES,
+  SUPPORTED_DOCUMENT_TYPES,
+  CODE_FILE_EXTENSIONS,
+  EXPORT_DATA_VERSION,
+  EXPORT_DATA_VERSION_V2,
+} from './models';
+
+// 聊天窗口相关类型
+export type {
+  ChatWindowConfig,
+  SubTopic,
+  ChatWindow,
+  LegacyConversation,
+} from './chatWindow';
+
+export {
+  DEFAULT_CHAT_WINDOW_CONFIG,
+  createDefaultSubTopic,
+  createDefaultChatWindow,
+} from './chatWindow';

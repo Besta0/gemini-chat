@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  gemini-chat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bohesocool/autoceya:latest
+    container_name: gemini-chat
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+    # 如果需要环境变量，可以在这里配置
+    # environment:
+    #   - VITE_API_KEY=${VITE_API_KEY}
