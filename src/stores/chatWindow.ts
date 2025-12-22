@@ -42,8 +42,12 @@ function generateId(): string {
 
 /**
  * 将消息转换为 Gemini API 格式
+ * 需求: 2.6 - 画图模型连续对话支持
+ * 
+ * @param message - 消息对象
+ * @param isImageGenerationModel - 是否为画图模型
  */
-function messageToGeminiContent(message: Message): GeminiContent {
+function messageToGeminiContent(message: Message, isImageGenerationModel: boolean = false): GeminiContent {
   const parts: GeminiPart[] = [];
 
   // 添加文本内容
@@ -51,15 +55,24 @@ function messageToGeminiContent(message: Message): GeminiContent {
     parts.push({ text: message.content });
   }
 
-  // 添加附件
-  if (message.attachments && message.attachments.length > 0) {
-    for (const attachment of message.attachments) {
-      parts.push({
-        inlineData: {
-          mimeType: attachment.mimeType,
-          data: attachment.data,
-        },
-      });
+  // 对于画图模型，model 角色的消息需要特殊处理
+  // 不包含图片数据，只保留 thoughtSignature，这是画图模型连续对话的关键
+  if (isImageGenerationModel && message.role === 'model') {
+    if (message.thoughtSignature) {
+      parts.push({ thoughtSignature: message.thoughtSignature });
+    }
+    // 画图模型的 model 回复不添加图片数据
+  } else {
+    // 非画图模型或 user 角色的消息，正常添加附件
+    if (message.attachments && message.attachments.length > 0) {
+      for (const attachment of message.attachments) {
+        parts.push({
+          inlineData: {
+            mimeType: attachment.mimeType,
+            data: attachment.data,
+          },
+        });
+      }
     }
   }
 
@@ -71,9 +84,12 @@ function messageToGeminiContent(message: Message): GeminiContent {
 
 /**
  * 将消息历史转换为 Gemini API 格式
+ * 
+ * @param messages - 消息列表
+ * @param isImageGenerationModel - 是否为画图模型
  */
-function messagesToGeminiContents(messages: Message[]): GeminiContent[] {
-  return messages.map(messageToGeminiContent);
+function messagesToGeminiContents(messages: Message[], isImageGenerationModel: boolean = false): GeminiContent[] {
+  return messages.map(msg => messageToGeminiContent(msg, isImageGenerationModel));
 }
 
 // ============ Store 状态接口 ============
@@ -687,10 +703,19 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
       const streamingEnabled = resolveStreamingEnabled(window.config, settingsState.getFullSettings());
 
       // 获取模型的有效高级参数配置
-      const effectiveAdvancedConfig = advancedConfig || useModelStore.getState().getEffectiveConfig(window.config.model);
+      // 优先使用窗口级别的配置，然后是传入的配置，最后回退到模型默认配置
+      const effectiveAdvancedConfig = advancedConfig || {
+        ...useModelStore.getState().getEffectiveConfig(window.config.model),
+        ...window.config.advancedConfig,
+      };
+
+      // 检查是否为画图模型（用于特殊处理历史记录）
+      const { getModelCapabilities } = await import('../types/models');
+      const modelCapabilities = getModelCapabilities(window.config.model);
+      const isImageGenerationModel = modelCapabilities.supportsImageGeneration === true;
 
       // 转换消息为 Gemini API 格式
-      const geminiContents = messagesToGeminiContents(messagesWithUser);
+      const geminiContents = messagesToGeminiContents(messagesWithUser, isImageGenerationModel);
 
       // 根据流式设置选择 API 调用方式
       // 需求: 10.3 - 流式输出逐字逐句实时显示
@@ -698,6 +723,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
       // 需求: 4.3 - 解析并保存思维链内容
       let fullResponse = '';
       let thoughtSummary: string | undefined;
+      let thoughtSignature: string | undefined; // 用于画图模型连续对话
       let generatedImages: ImageExtractionResult[] | undefined;
       // 需求: 8.2, 8.3, 8.4 - 耗时数据
       let duration: number | undefined;
@@ -721,6 +747,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
         );
         fullResponse = result.text;
         thoughtSummary = result.thoughtSummary;
+        thoughtSignature = result.thoughtSignature; // 保存 thoughtSignature
         generatedImages = result.images;
         // 需求: 8.4 - 保存耗时数据
         duration = result.duration;
@@ -753,14 +780,15 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
         }
       }
 
-      // 创建 AI 响应消息（包含思维链摘要和耗时数据）
-      // 需求: 4.3, 8.4
+      // 创建 AI 响应消息（包含思维链摘要、签名和耗时数据）
+      // 需求: 4.3, 8.4, 2.6
       const aiMessage: Message = {
         id: generateId(),
         role: 'model',
         content: fullResponse,
         timestamp: Date.now(),
         thoughtSummary,
+        thoughtSignature, // 用于画图模型连续对话
         // 需求: 8.4 - 保存耗时数据
         duration,
         ttfb,
@@ -1067,13 +1095,23 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
       const streamingEnabled = resolveStreamingEnabled(window.config, settingsState.getFullSettings());
 
       // 获取模型的有效高级参数配置
-      const effectiveAdvancedConfig = useModelStore.getState().getEffectiveConfig(window.config.model);
+      // 优先使用窗口级别的配置，然后回退到模型默认配置
+      const effectiveAdvancedConfig = {
+        ...useModelStore.getState().getEffectiveConfig(window.config.model),
+        ...window.config.advancedConfig,
+      };
+
+      // 检查是否为画图模型（用于特殊处理历史记录）
+      const { getModelCapabilities } = await import('../types/models');
+      const modelCapabilities = getModelCapabilities(window.config.model);
+      const isImageGenerationModel = modelCapabilities.supportsImageGeneration === true;
 
       // 转换消息为 Gemini API 格式
-      const geminiContents = messagesToGeminiContents(contextMessages);
+      const geminiContents = messagesToGeminiContents(contextMessages, isImageGenerationModel);
 
       let fullResponse = '';
       let thoughtSummary: string | undefined;
+      let thoughtSignature: string | undefined; // 用于画图模型连续对话
       // 需求: 8.2, 8.3, 8.4 - 耗时数据
       let duration: number | undefined;
       let ttfb: number | undefined;
@@ -1095,6 +1133,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
         );
         fullResponse = result.text;
         thoughtSummary = result.thoughtSummary;
+        thoughtSignature = result.thoughtSignature; // 保存 thoughtSignature
         // 需求: 8.4 - 保存耗时数据
         duration = result.duration;
         ttfb = result.ttfb;
@@ -1110,12 +1149,13 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
       }
 
       // 更新消息内容，保持 ID 不变
-      // 需求: 4.3, 8.4 - Property 8: 重新生成消息替换
+      // 需求: 4.3, 8.4, 2.6 - Property 8: 重新生成消息替换
       const updatedMessage: Message = {
         ...originalMessage,
         content: fullResponse,
         timestamp: Date.now(),
         thoughtSummary,
+        thoughtSignature, // 用于画图模型连续对话
         // 需求: 8.4 - 保存耗时数据
         duration,
         ttfb,

@@ -1,11 +1,19 @@
 /**
  * 鉴权服务
  * 提供密码哈希、验证等功能
- * Requirements: 5.4, 5.5, 5.6
+ * Requirements: 5.4, 5.5, 5.6, 1.1, 1.3, 1.5
  */
 
 import { AuthConfig, DEFAULT_PASSWORD, AUTH_CONFIG_KEY } from '../types/auth';
 import { authLogger as logger } from './logger';
+import {
+  generateToken,
+  verifyToken,
+  saveToken,
+  getToken,
+  clearToken,
+  isTokenExpired,
+} from './jwt';
 
 /**
  * 简单的密码哈希函数
@@ -117,4 +125,85 @@ export async function updatePassword(newPassword: string): Promise<void> {
   };
   saveAuthConfig(config);
   logger.info('密码已更新');
+}
+
+// ============ JWT Token 相关函数 ============
+
+/**
+ * 登录并生成 Token
+ * 验证密码成功后生成 JWT Token 并存储到 LocalStorage
+ * 需求: 1.1
+ * 
+ * @param password - 用户输入的密码
+ * @returns 登录是否成功
+ */
+export async function loginWithToken(password: string): Promise<boolean> {
+  try {
+    const config = getAuthConfig();
+    if (!config) {
+      logger.error('鉴权配置不存在');
+      return false;
+    }
+
+    const isValid = await verifyPassword(password, config.passwordHash);
+    if (!isValid) {
+      logger.warn('登录失败：密码错误');
+      return false;
+    }
+
+    // 生成并存储 JWT Token
+    const token = await generateToken();
+    saveToken(token);
+    logger.info('登录成功，JWT Token 已生成并存储');
+    return true;
+  } catch (error) {
+    logger.error('登录过程发生错误', error);
+    return false;
+  }
+}
+
+/**
+ * 从 Token 恢复登录状态
+ * 检查 LocalStorage 中的 Token 是否有效
+ * 需求: 1.3
+ * 
+ * @returns 是否成功恢复登录状态
+ */
+export async function restoreSession(): Promise<boolean> {
+  try {
+    const token = getToken();
+    if (!token) {
+      logger.info('未找到存储的 Token');
+      return false;
+    }
+
+    const payload = await verifyToken(token);
+    if (!payload) {
+      logger.warn('Token 验证失败，清除无效 Token');
+      clearToken();
+      return false;
+    }
+
+    if (isTokenExpired(payload)) {
+      logger.warn('Token 已过期，清除过期 Token');
+      clearToken();
+      return false;
+    }
+
+    logger.info('从 Token 成功恢复登录状态');
+    return true;
+  } catch (error) {
+    logger.error('恢复登录状态时发生错误', error);
+    clearToken();
+    return false;
+  }
+}
+
+/**
+ * 登出并清除 Token
+ * 需求: 1.5
+ */
+export function logoutWithToken(): void {
+  clearToken();
+  logger.info('已登出并清除 JWT Token');
 }

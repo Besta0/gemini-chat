@@ -7,9 +7,11 @@ import { create } from 'zustand';
 import type { AuthState } from '../types/auth';
 import {
   initAuthConfig,
-  verifyPassword,
   updatePassword,
   getAuthConfig,
+  loginWithToken,
+  restoreSession,
+  logoutWithToken,
 } from '../services/auth';
 import { authLogger as logger } from '../services/logger';
 
@@ -63,17 +65,28 @@ export const useAuthStore = create<AuthStore>((set) => ({
   error: null,
 
   // 初始化鉴权状态
+  // 需求: 1.1, 1.3 - 检查 Token 并恢复登录状态
   initialize: async () => {
     set({ isLoading: true, error: null });
     try {
       const config = await initAuthConfig();
+      
+      // 尝试从 Token 恢复登录状态
+      const sessionRestored = await restoreSession();
+      
       set({
         initialized: true,
         isLoading: false,
+        isAuthenticated: sessionRestored,
         // 如果是默认密码，登录后需要重置
         needsPasswordReset: config.isDefaultPassword,
       });
-      logger.info('鉴权系统初始化完成');
+      
+      if (sessionRestored) {
+        logger.info('鉴权系统初始化完成，已从 Token 恢复登录状态');
+      } else {
+        logger.info('鉴权系统初始化完成');
+      }
     } catch (error) {
       logger.error('鉴权系统初始化失败', error);
       set({
@@ -85,6 +98,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
   },
 
   // 登录
+  // 需求: 1.1 - 调用 loginWithToken() 生成并存储 Token
   login: async (password: string) => {
     set({ isLoading: true, error: null });
     try {
@@ -94,7 +108,8 @@ export const useAuthStore = create<AuthStore>((set) => ({
         return false;
       }
 
-      const isValid = await verifyPassword(password, config.passwordHash);
+      // 使用 loginWithToken 进行登录，会自动生成并存储 Token
+      const isValid = await loginWithToken(password);
       if (isValid) {
         set({
           isAuthenticated: true,
@@ -122,7 +137,10 @@ export const useAuthStore = create<AuthStore>((set) => ({
   },
 
   // 登出
+  // 需求: 1.5 - 调用 logoutWithToken() 清除 Token
   logout: () => {
+    // 清除 JWT Token
+    logoutWithToken();
     set({
       isAuthenticated: false,
       error: null,

@@ -1,13 +1,14 @@
 /**
  * 侧边栏设置组件
  * 实现可折叠的设置分组，包含 API 配置、模型选择、生成参数、系统指令分组
- * 需求: 4.3, 4.4, 4.5
+ * 需求: 4.3, 4.4, 4.5, 1.3（登出功能）
  */
 
 import React, { useState, useCallback } from 'react';
 import { useSettingsStore } from '../../stores/settings';
 import { useChatWindowStore } from '../../stores/chatWindow';
 import { useModelStore } from '../../stores/model';
+import { useAuthStore } from '../../stores/auth';
 import { getEnabledModels } from '../../services/model';
 import { durations, easings, touchTargets } from '../../design/tokens';
 import { ThinkingLevelSelector } from '../ModelParams/ThinkingLevelSelector';
@@ -111,6 +112,9 @@ export function SidebarSettings({ isExpanded = true }: SidebarSettingsProps) {
         >
           <SystemInstructionGroup />
         </SettingsGroup>
+
+        {/* 登出按钮 - 需求: 1.3 */}
+        <LogoutButton />
       </div>
     </div>
   );
@@ -259,7 +263,7 @@ function ModelSelectGroup() {
       >
         {enabledModels.map((model) => (
           <option key={model.id} value={model.id}>
-            {model.name}
+            {model.id}
           </option>
         ))}
       </select>
@@ -578,6 +582,69 @@ function ChevronIcon({ className, style }: { className?: string; style?: React.C
     <svg className={className} style={style} fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
     </svg>
+  );
+}
+
+function LogoutIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+        d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+    </svg>
+  );
+}
+
+// ============ 登出按钮组件 ============
+
+/**
+ * 登出按钮组件
+ * 需求: 1.3 - 在侧边栏设置中提供登出功能
+ */
+function LogoutButton() {
+  const { logout } = useAuthStore();
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const handleLogout = useCallback(() => {
+    logout();
+  }, [logout]);
+
+  return (
+    <div className="mt-4 pt-4 border-t border-neutral-200 dark:border-neutral-700">
+      {showConfirm ? (
+        <div className="space-y-2">
+          <p className="text-xs text-neutral-600 dark:text-neutral-400 text-center">
+            确定要登出吗？
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={handleLogout}
+              className="flex-1 px-3 py-1.5 text-xs font-medium rounded-md
+                bg-red-500 hover:bg-red-600 text-white transition-colors"
+            >
+              确定
+            </button>
+            <button
+              onClick={() => setShowConfirm(false)}
+              className="flex-1 px-3 py-1.5 text-xs font-medium rounded-md
+                bg-neutral-200 dark:bg-neutral-600 hover:bg-neutral-300 dark:hover:bg-neutral-500
+                text-neutral-700 dark:text-neutral-200 transition-colors"
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={() => setShowConfirm(true)}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md
+            bg-neutral-100 dark:bg-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-600
+            text-neutral-700 dark:text-neutral-200 transition-colors"
+        >
+          <LogoutIcon />
+          <span>登出</span>
+        </button>
+      )}
+    </div>
   );
 }
 

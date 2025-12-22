@@ -605,16 +605,46 @@ export function resolveRedirectChain(
 }
 
 
+// ============ 预设模型管理 ============
+
+import { GEMINI_MODELS } from '../types/models';
+
+/**
+ * 预设模型 ID 集合
+ * 需求: 3.1
+ * 
+ * 包含系统内置的 Gemini 模型 ID
+ */
+export const PRESET_MODEL_IDS: Set<string> = new Set(
+  GEMINI_MODELS.map(model => model.id)
+);
+
+/**
+ * 判断是否为预设模型
+ * 需求: 3.1, 3.2
+ * 
+ * @param modelId - 模型 ID
+ * @returns 如果是预设模型返回 true，否则返回 false
+ */
+export function isPresetModel(modelId: string): boolean {
+  if (!modelId || typeof modelId !== 'string') {
+    return false;
+  }
+  return PRESET_MODEL_IDS.has(modelId);
+}
+
+
 // ============ 模型合并逻辑 ============
 
 /**
  * 合并远程和本地模型列表
- * 需求: 1.4, 5.3
+ * 需求: 1.4, 3.2, 3.3, 5.3
  * 
  * 合并规则：
  * 1. 每个模型 ID 唯一
- * 2. 本地自定义配置优先于远程配置
- * 3. 保留本地模型的自定义属性（如 redirectTo、advancedConfig）
+ * 2. 预设模型的配置不被 API 返回的同名模型覆盖（需求 3.3）
+ * 3. 非预设模型标记为 isCustom: true（需求 3.2）
+ * 4. 保留本地模型的自定义属性（如 redirectTo、advancedConfig）
  * 
  * @param remote - 远程获取的模型列表
  * @param local - 本地存储的模型列表
@@ -636,25 +666,55 @@ export function mergeModels(
   // 首先添加远程模型
   for (const remoteModel of remote) {
     const localModel = localMap.get(remoteModel.id);
+    const isPreset = isPresetModel(remoteModel.id);
     
-    if (localModel) {
-      // 本地配置优先：合并远程和本地配置，本地属性覆盖远程
-      resultMap.set(remoteModel.id, {
-        ...remoteModel,
-        ...localModel,
-        // 保留远程的基本信息，但允许本地覆盖
-        capabilities: localModel.capabilities || remoteModel.capabilities,
-      });
+    if (isPreset) {
+      // 需求 3.3: 预设模型不被 API 返回的同名模型覆盖
+      // 保留预设模型的配置，但可以合并本地的自定义属性
+      if (localModel) {
+        resultMap.set(remoteModel.id, {
+          ...localModel,
+          // 确保预设模型的 isCustom 始终为 false
+          isCustom: false,
+        });
+      } else {
+        // 使用远程配置，但标记为非自定义
+        resultMap.set(remoteModel.id, {
+          ...remoteModel,
+          isCustom: false,
+        });
+      }
     } else {
-      // 没有本地配置，直接使用远程配置
-      resultMap.set(remoteModel.id, { ...remoteModel });
+      // 需求 3.2: 非预设模型标记为自定义模型
+      if (localModel) {
+        // 本地配置优先：合并远程和本地配置，本地属性覆盖远程
+        resultMap.set(remoteModel.id, {
+          ...remoteModel,
+          ...localModel,
+          // 保留远程的基本信息，但允许本地覆盖
+          capabilities: localModel.capabilities || remoteModel.capabilities,
+          // 标记为自定义模型
+          isCustom: true,
+        });
+      } else {
+        // 没有本地配置，直接使用远程配置，标记为自定义
+        resultMap.set(remoteModel.id, {
+          ...remoteModel,
+          isCustom: true,
+        });
+      }
     }
   }
 
-  // 添加本地独有的模型（自定义模型）
+  // 添加本地独有的模型
   for (const localModel of local) {
     if (!resultMap.has(localModel.id)) {
-      resultMap.set(localModel.id, { ...localModel });
+      const isPreset = isPresetModel(localModel.id);
+      resultMap.set(localModel.id, {
+        ...localModel,
+        // 根据是否为预设模型设置 isCustom
+        isCustom: !isPreset,
+      });
     }
   }
 

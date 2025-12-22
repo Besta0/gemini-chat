@@ -292,23 +292,46 @@ export function buildRequestBody(
     };
   }
 
-  // 添加思考配置
+  // 添加思考配置到 generationConfig 内部
   // 需求: 1.3, 1.4, 3.8, 4.2
+  // 重要: thinkingConfig 必须放在 generationConfig 内部，而不是请求体顶层
   if (modelId) {
     // 使用新的基于模型类型的思考配置构建函数
     const thinkingConfig = buildThinkingConfigForModel(modelId, advancedConfig);
     if (thinkingConfig) {
-      request.thinkingConfig = thinkingConfig;
+      // 确保 generationConfig 存在
+      if (!request.generationConfig) {
+        request.generationConfig = {};
+      }
+      // 将 thinkingConfig 放入 generationConfig 内部
+      request.generationConfig.thinkingConfig = thinkingConfig;
     }
   } else if (advancedConfig?.thinkingLevel) {
     // 向后兼容：如果没有提供 modelId，使用旧的方式
-    request.thinkingConfig = buildThinkingConfig(advancedConfig.thinkingLevel);
+    if (!request.generationConfig) {
+      request.generationConfig = {};
+    }
+    request.generationConfig.thinkingConfig = buildThinkingConfig(advancedConfig.thinkingLevel);
   }
 
   // 添加图片生成配置（如果提供）
   // 需求: 2.5
   if (advancedConfig?.imageConfig) {
     request.imageConfig = buildImageConfig(advancedConfig.imageConfig);
+  }
+
+  // 为画图模型添加 responseModalities 配置，支持连续对话
+  // 需求: 2.6 - 画图模型连续对话支持
+  if (modelId) {
+    const capabilities = getModelCapabilities(modelId);
+    if (capabilities.supportsImageGeneration) {
+      // 确保 generationConfig 存在
+      if (!request.generationConfig) {
+        request.generationConfig = {};
+      }
+      // 添加 responseModalities 以支持文本和图片输出
+      request.generationConfig.responseModalities = ['TEXT', 'IMAGE'];
+    }
   }
 
   return request;
@@ -399,17 +422,19 @@ export interface ThoughtExtractionResult {
   text: string;
   /** 思维链内容 */
   thought: string;
+  /** 思维链签名（用于画图模型连续对话） */
+  thoughtSignature?: string;
 }
 
 /**
  * 解析响应中的思维链内容
- * 需求: 4.3
+ * 需求: 4.3, 2.6
  * 
  * 遍历 response.parts，检查 thought 布尔值，
- * 将思维链内容和普通回复内容分离
+ * 将思维链内容和普通回复内容分离，同时提取 thoughtSignature
  * 
  * @param chunk - 流式响应块
- * @returns 包含文本和思维链的对象，如果没有内容则返回 null
+ * @returns 包含文本、思维链和签名的对象，如果没有内容则返回 null
  */
 export function extractThoughtSummary(chunk: StreamChunk): ThoughtExtractionResult | null {
   if (!chunk.candidates || chunk.candidates.length === 0) {
@@ -423,8 +448,14 @@ export function extractThoughtSummary(chunk: StreamChunk): ThoughtExtractionResu
   
   let text = '';
   let thought = '';
+  let thoughtSignature: string | undefined;
   
   for (const part of candidate.content.parts) {
+    // 提取 thoughtSignature（用于画图模型连续对话）
+    if ('thoughtSignature' in part && (part as { thoughtSignature?: string }).thoughtSignature) {
+      thoughtSignature = (part as { thoughtSignature: string }).thoughtSignature;
+    }
+    
     // 检查是否为思维链部分（包含 thought: true）
     if ('thought' in part && part.thought === true && 'text' in part) {
       thought += part.text;
@@ -435,11 +466,11 @@ export function extractThoughtSummary(chunk: StreamChunk): ThoughtExtractionResu
   }
   
   // 如果没有任何内容，返回 null
-  if (!text && !thought) {
+  if (!text && !thought && !thoughtSignature) {
     return null;
   }
   
-  return { text, thought };
+  return { text, thought, thoughtSignature };
 }
 
 /**
@@ -867,7 +898,7 @@ export async function sendMessageWithThoughts(
   onChunk?: (text: string) => void,
   advancedConfig?: ModelAdvancedConfig,
   signal?: AbortSignal
-): Promise<{ text: string; thoughtSummary?: string; images?: ImageExtractionResult[]; duration?: number; ttfb?: number }> {
+): Promise<{ text: string; thoughtSummary?: string; thoughtSignature?: string; images?: ImageExtractionResult[]; duration?: number; ttfb?: number }> {
   // 需求: 2.2 - 输出请求日志
   apiLogger.info('发送流式消息请求（含思维链）', { model: config.model, messageCount: contents.length });
 
@@ -901,6 +932,7 @@ export async function sendMessageWithThoughts(
   // 用于追踪已接收的部分响应 - 需求: 5.3, 5.4
   let fullText = '';
   let fullThought = '';
+  let lastThoughtSignature: string | undefined; // 用于画图模型连续对话
   const allImages: ImageExtractionResult[] = [];
   let ttfb: number | undefined;
 
@@ -1013,6 +1045,10 @@ export async function sendMessageWithThoughts(
             if (extracted.thought) {
               fullThought += extracted.thought;
             }
+            // 提取 thoughtSignature（用于画图模型连续对话）
+            if (extracted.thoughtSignature) {
+              lastThoughtSignature = extracted.thoughtSignature;
+            }
           }
           // 提取图片数据 - 需求: 2.7
           const images = extractImagesFromChunk(chunk);
@@ -1035,6 +1071,10 @@ export async function sendMessageWithThoughts(
           }
           if (extracted.thought) {
             fullThought += extracted.thought;
+          }
+          // 提取 thoughtSignature（用于画图模型连续对话）
+          if (extracted.thoughtSignature) {
+            lastThoughtSignature = extracted.thoughtSignature;
           }
         }
         // 提取图片数据 - 需求: 2.7
@@ -1066,6 +1106,7 @@ export async function sendMessageWithThoughts(
     return {
       text: fullText,
       thoughtSummary: fullThought || undefined,
+      thoughtSignature: lastThoughtSignature,
       images: allImages.length > 0 ? allImages : undefined,
       duration,
       ttfb,

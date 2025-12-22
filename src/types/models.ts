@@ -58,6 +58,8 @@ export interface Message {
   timestamp: number;
   /** 思维链摘要（可选） - 需求: 4.3 */
   thoughtSummary?: string;
+  /** 思维链签名（用于画图模型连续对话） - 需求: 2.6 */
+  thoughtSignature?: string;
   /** Token 使用量（可选） - 需求: 7.2 */
   tokenUsage?: MessageTokenUsage;
   /** 请求耗时（毫秒，可选） - 需求: 8.4 */

@@ -24,6 +24,12 @@ interface MessageInputProps {
   placeholder?: string;
   /** 是否显示扩展工具栏 */
   showExtendedToolbar?: boolean;
+  /** 编辑模式的初始内容 - 需求: 3.3 */
+  editingContent?: string;
+  /** 是否处于编辑模式 - 需求: 3.3 */
+  isEditing?: boolean;
+  /** 取消编辑回调 - 需求: 3.3 */
+  onCancelEdit?: () => void;
 }
 
 // 输入框高度限制常量（用于属性测试）
@@ -60,6 +66,9 @@ export function MessageInput({
   disabled = false,
   placeholder = '输入消息...',
   showExtendedToolbar = true,
+  editingContent,
+  isEditing = false,
+  onCancelEdit,
 }: MessageInputProps) {
   const [content, setContent] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -72,6 +81,17 @@ export function MessageInput({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const reducedMotion = useReducedMotion();
+
+  // 当进入编辑模式时，填充编辑内容并聚焦 - 需求: 3.3
+  useEffect(() => {
+    if (isEditing && editingContent !== undefined) {
+      setContent(editingContent);
+      // 聚焦输入框
+      setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 0);
+    }
+  }, [isEditing, editingContent]);
 
   // 自动调整文本框高度 - Requirements: 9.3
   useEffect(() => {
@@ -181,12 +201,26 @@ export function MessageInput({
     }
 
     onSend(trimmedContent, attachments.length > 0 ? attachments : undefined);
+    
+    // 编辑模式下不清空内容，由父组件控制 - 需求: 3.3
+    if (!isEditing) {
+      setContent('');
+      setAttachments([]);
+      
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
+    }
+  };
+
+  // 处理取消编辑 - 需求: 3.3
+  const handleCancelEdit = () => {
     setContent('');
     setAttachments([]);
-    
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
+    onCancelEdit?.();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -217,6 +251,33 @@ export function MessageInput({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {/* 编辑模式指示器 - 需求: 3.3 */}
+      {isEditing && (
+        <div className="
+          mb-2 px-3 py-2 rounded-xl
+          bg-primary-50 dark:bg-primary-900/20 
+          border border-primary-200 dark:border-primary-800 
+          flex items-center justify-between
+        ">
+          <div className="flex items-center gap-2">
+            <EditIndicatorIcon className="w-4 h-4 text-primary-500" />
+            <span className="text-sm font-medium text-primary-700 dark:text-primary-300">
+              正在编辑消息
+            </span>
+          </div>
+          <button
+            onClick={handleCancelEdit}
+            className="
+              text-sm text-primary-600 dark:text-primary-400 
+              hover:text-primary-700 dark:hover:text-primary-300
+              font-medium
+            "
+          >
+            取消
+          </button>
+        </div>
+      )}
+
       {/* 错误提示 */}
       {error && (
         <div className="
@@ -637,6 +698,22 @@ function StopIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="currentColor" viewBox="0 0 24 24">
       <rect x="6" y="6" width="12" height="12" rx="2" />
+    </svg>
+  );
+}
+
+/**
+ * 编辑指示器图标 - 需求: 3.3
+ */
+function EditIndicatorIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+      />
     </svg>
   );
 }

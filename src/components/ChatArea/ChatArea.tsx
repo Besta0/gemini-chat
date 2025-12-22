@@ -37,6 +37,7 @@ export interface ChatAreaProps {
  */
 export function ChatArea({ windowId: propWindowId }: ChatAreaProps) {
   const [isConfigPanelOpen, setIsConfigPanelOpen] = useState(false);
+  const [regeneratingMessageId, setRegeneratingMessageId] = useState<string | null>(null);
 
   // 从 store 获取状态
   const {
@@ -51,6 +52,8 @@ export function ChatArea({ windowId: propWindowId }: ChatAreaProps) {
     selectSubTopic,
     updateSubTopic,
     updateWindowConfig,
+    regenerateMessage,
+    editMessage,
   } = useChatWindowStore();
 
   const { apiEndpoint, apiKey } = useSettingsStore();
@@ -75,6 +78,7 @@ export function ChatArea({ windowId: propWindowId }: ChatAreaProps) {
 
       const subTopicId = currentWindow.activeSubTopicId;
       
+      // 发送消息
       await sendMessage(
         currentWindowId,
         subTopicId,
@@ -142,6 +146,41 @@ export function ChatArea({ windowId: propWindowId }: ChatAreaProps) {
     setIsConfigPanelOpen(false);
   }, []);
 
+  // 处理重新生成消息
+  const handleRegenerateMessage = useCallback(
+    async (messageId: string) => {
+      if (!currentWindowId || !currentWindow) return;
+
+      setRegeneratingMessageId(messageId);
+      try {
+        await regenerateMessage(currentWindowId, currentWindow.activeSubTopicId, messageId);
+      } finally {
+        setRegeneratingMessageId(null);
+      }
+    },
+    [currentWindowId, currentWindow, regenerateMessage]
+  );
+
+  // 处理编辑消息 - 需求: 1.4, 1.5
+  const handleEditMessage = useCallback(
+    async (messageId: string, newContent: string, resend: boolean) => {
+      if (!currentWindowId || !currentWindow) return;
+
+      const subTopicId = currentWindow.activeSubTopicId;
+      
+      // 更新消息内容
+      await editMessage(currentWindowId, subTopicId, messageId, newContent);
+      
+      // 如果需要重新发送，触发重新生成
+      if (resend) {
+        await regenerateMessage(currentWindowId, subTopicId, messageId);
+      }
+    },
+    [currentWindowId, currentWindow, editMessage, regenerateMessage]
+  );
+
+
+
   // 渲染 Markdown 内容
   const renderContent = useCallback((content: string) => {
     return <MarkdownRenderer content={content} />;
@@ -182,6 +221,8 @@ export function ChatArea({ windowId: propWindowId }: ChatAreaProps) {
         isSending={isSending}
         streamingText={streamingText}
         renderContent={renderContent}
+        onRegenerateMessage={handleRegenerateMessage}
+        onEditMessage={handleEditMessage}
       />
 
       {/* 消息输入 - Requirements: 5.1, 5.4 */}

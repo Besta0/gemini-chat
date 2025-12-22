@@ -32,16 +32,29 @@ interface ModelListProps {
 // ============ 辅助函数 ============
 
 /**
- * 获取模型来源标签
+ * 获取模型来源标签 - 需求: 3.4, 3.6
+ * 为预设模型和自定义模型提供不同的视觉标识
  */
-function getModelSourceLabel(model: ModelConfig): { text: string; color: string } {
+function getModelSourceLabel(model: ModelConfig): { text: string; color: string; icon: 'preset' | 'custom' | 'openai' } {
   if (model.isCustom) {
-    return { text: '自定义', color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' };
+    return { 
+      text: '自定义', 
+      color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
+      icon: 'custom'
+    };
   }
   if (model.provider === 'openai') {
-    return { text: 'OpenAI', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' };
+    return { 
+      text: 'OpenAI', 
+      color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+      icon: 'openai'
+    };
   }
-  return { text: '预设', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' };
+  return { 
+    text: '预设', 
+    color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+    icon: 'preset'
+  };
 }
 
 /**
@@ -206,14 +219,20 @@ function ModelListItem({
       onClick={() => onSelect?.(model)}
     >
       <div className="flex items-start justify-between gap-3">
-        {/* 模型信息 - 需求: 2.1, 2.2 */}
+        {/* 模型信息 - 需求: 2.1, 2.2, 3.4, 3.6 */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
+            {/* 模型来源图标 - 需求: 3.4, 3.6 */}
+            {sourceLabel.icon === 'custom' ? (
+              <CustomModelIcon className="h-4 w-4 text-purple-500 dark:text-purple-400 flex-shrink-0" />
+            ) : sourceLabel.icon === 'preset' ? (
+              <PresetModelIcon className="h-4 w-4 text-blue-500 dark:text-blue-400 flex-shrink-0" />
+            ) : null}
             {/* 主显示名称使用 model.id - 需求: 2.1 */}
             <span className="font-medium text-slate-900 dark:text-slate-100 truncate font-mono">
               {model.id}
             </span>
-            {/* 来源标签 */}
+            {/* 来源标签 - 需求: 3.4, 3.6 */}
             <span className={`px-2 py-0.5 text-xs rounded-full ${sourceLabel.color}`}>
               {sourceLabel.text}
             </span>
@@ -341,6 +360,32 @@ function ArrowRightIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+    </svg>
+  );
+}
+
+/**
+ * 预设模型图标 - 需求: 3.4, 3.6
+ * 使用盾牌图标表示系统内置的预设模型
+ */
+function PresetModelIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+        d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+    </svg>
+  );
+}
+
+/**
+ * 自定义模型图标 - 需求: 3.4, 3.6
+ * 使用用户图标表示从 API 获取的自定义模型
+ */
+function CustomModelIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+        d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
     </svg>
   );
 }

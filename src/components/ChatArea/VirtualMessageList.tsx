@@ -3,11 +3,13 @@
  * 需求: 1.1, 1.3, 1.4, 1.5 - 虚拟滚动、自动滚动、动态高度支持
  */
 
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback, useState, memo, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Message, Attachment } from '../../types/models';
 import { useReducedMotion } from '../motion';
 import { ThoughtSummaryCard } from './ThoughtSummaryCard';
+import { MessageActions } from './MessageActions';
+import { InlineMessageEditor } from './InlineMessageEditor';
 
 // ============ 类型定义 ============
 
@@ -33,8 +35,8 @@ export interface VirtualMessageListProps {
   streamingText?: string;
   /** 渲染消息内容的函数 */
   renderContent?: (content: string) => React.ReactNode;
-  /** 消息编辑回调 */
-  onEditMessage?: (messageId: string, newContent: string) => void;
+  /** 消息编辑回调 - 需求 1.4, 1.5: 支持 resend 参数 */
+  onEditMessage?: (messageId: string, newContent: string, resend: boolean) => void;
   /** 消息重新生成回调 */
   onRegenerateMessage?: (messageId: string) => void;
   /** 虚拟滚动配置 */
@@ -248,13 +250,14 @@ function StreamingMessage({ streamingText, renderContent }: StreamingMessageProp
 
 /**
  * 消息气泡组件
+ * 性能优化：使用 memo 避免不必要的重渲染
  */
 interface MessageBubbleProps {
   isUser: boolean;
   children: React.ReactNode;
 }
 
-function MessageBubble({ isUser, children }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ isUser, children }: MessageBubbleProps) {
   return (
     <div
       className={`
@@ -268,21 +271,22 @@ function MessageBubble({ isUser, children }: MessageBubbleProps) {
       {children}
     </div>
   );
-}
+});
 
 /**
  * 单条消息组件
+ * 性能优化：使用 memo 避免不必要的重渲染
  */
 interface MessageItemProps {
   message: Message;
   renderContent: (content: string) => React.ReactNode;
   isLast: boolean;
   reducedMotion: boolean;
-  onEdit?: (messageId: string, newContent: string) => void;
+  onEdit?: (messageId: string, newContent: string, resend: boolean) => void;
   onRegenerate?: (messageId: string) => void;
 }
 
-function MessageItem({ 
+const MessageItem = memo(function MessageItem({ 
   message, 
   renderContent, 
   isLast, 
@@ -292,59 +296,148 @@ function MessageItem({
 }: MessageItemProps) {
   const isUser = message.role === 'user';
   const [showTimestamp, setShowTimestamp] = useState(false);
+  const [showActions, setShowActions] = useState(false);
+  
+  // 需求 1.1: 添加编辑状态管理
+  const [isEditing, setIsEditing] = useState(false);
 
-  const transitionStyle = reducedMotion
-    ? {}
-    : { transition: 'all 150ms ease-out' };
+  // 性能优化：缓存过渡样式
+  const transitionStyle = useMemo(() => 
+    reducedMotion ? {} : { transition: 'all 150ms ease-out' },
+    [reducedMotion]
+  );
+
+  // 处理重新生成
+  const handleRegenerate = useCallback(() => {
+    if (onRegenerate) {
+      onRegenerate(message.id);
+    }
+  }, [onRegenerate, message.id]);
+
+  // 需求 1.1: 进入编辑模式
+  const handleEdit = useCallback(() => {
+    setIsEditing(true);
+  }, []);
+
+  // 需求 1.1: 退出编辑模式
+  const handleCancelEdit = useCallback(() => {
+    setIsEditing(false);
+  }, []);
+
+  // 需求 1.4: 处理"仅保存"操作
+  const handleSave = useCallback((newContent: string) => {
+    setIsEditing(false);
+    if (onEdit) {
+      onEdit(message.id, newContent, false);
+    }
+  }, [message.id, onEdit]);
+
+  // 需求 1.5: 处理"保存并重新发送"操作
+  const handleSaveAndResend = useCallback((newContent: string) => {
+    setIsEditing(false);
+    if (onEdit) {
+      onEdit(message.id, newContent, true);
+    }
+  }, [message.id, onEdit]);
 
   return (
     <div 
       className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}
-      onMouseEnter={() => setShowTimestamp(true)}
-      onMouseLeave={() => setShowTimestamp(false)}
+      onMouseEnter={() => {
+        if (!isEditing) {
+          setShowTimestamp(true);
+          setShowActions(true);
+        }
+      }}
+      onMouseLeave={() => {
+        setShowTimestamp(false);
+        setShowActions(false);
+      }}
     >
       <Avatar role={message.role} />
-      <div className={`flex-1 min-w-0 max-w-[85%] ${isUser ? 'flex flex-col items-end' : ''}`}>
-        {/* 附件预览 */}
-        {message.attachments && message.attachments.length > 0 && (
-          <AttachmentList attachments={message.attachments} isUser={isUser} />
-        )}
-        
-        {/* 思维链卡片 */}
-        {!isUser && message.thoughtSummary && (
-          <ThoughtSummaryCard content={message.thoughtSummary} defaultExpanded={true} />
-        )}
-        
-        {/* 消息内容 */}
-        {message.content && (
-          <MessageBubble isUser={isUser}>
-            {renderContent(message.content)}
-          </MessageBubble>
-        )}
+      
+      {/* 需求 1.2: 根据 isEditing 状态渲染 MessageBubble 或 InlineMessageEditor */}
+      {isEditing ? (
+        // 编辑模式：显示原位编辑器
+        <InlineMessageEditor
+          message={message}
+          isLastUserMessage={isLast && isUser}
+          onSave={handleSave}
+          onSaveAndResend={handleSaveAndResend}
+          onCancel={handleCancelEdit}
+        />
+      ) : (
+        // 显示模式：显示消息内容
+        <div className={`relative flex-1 min-w-0 max-w-[85%] ${isUser ? 'flex flex-col items-end' : ''}`}>
+          {/* 附件预览 */}
+          {message.attachments && message.attachments.length > 0 && (
+            <AttachmentList attachments={message.attachments} isUser={isUser} />
+          )}
+          
+          {/* 思维链卡片 */}
+          {!isUser && message.thoughtSummary && (
+            <ThoughtSummaryCard content={message.thoughtSummary} defaultExpanded={true} />
+          )}
+          
+          {/* 消息内容 */}
+          {message.content && (
+            <MessageBubble isUser={isUser}>
+              {renderContent(message.content)}
+            </MessageBubble>
+          )}
 
-        {/* 时间戳 - 悬停显示 */}
-        <div
-          className={`
-            text-xs text-neutral-400 dark:text-neutral-500 mt-1 px-1
-            ${isUser ? 'text-right' : 'text-left'}
-          `}
-          style={{
-            ...transitionStyle,
-            opacity: showTimestamp || isLast ? 1 : 0,
-            transform: showTimestamp || isLast ? 'translateY(0)' : 'translateY(-4px)',
-          }}
-        >
-          {formatTime(message.timestamp)}
+          {/* 按钮和时间戳容器 - 并排显示，预留固定高度避免抖动 */}
+          <div
+            className={`
+              flex items-center gap-2 mt-1
+              min-h-[28px]
+              ${isUser ? 'flex-row-reverse' : 'flex-row'}
+            `}
+          >
+            {/* 消息操作按钮 */}
+            <div
+              className="flex items-center gap-1"
+              style={{
+                ...transitionStyle,
+                opacity: showActions ? 1 : 0,
+              }}
+            >
+              {showActions && (
+                <MessageActions
+                  message={message}
+                  isUserMessage={isUser}
+                  onEdit={isUser ? handleEdit : undefined}
+                  onRegenerate={!isUser ? handleRegenerate : undefined}
+                  visible={showActions}
+                />
+              )}
+            </div>
+
+            {/* 时间戳 - 悬停显示 */}
+            <div
+              className={`
+                text-xs text-neutral-400 dark:text-neutral-500 px-1
+                ${isUser ? 'text-right' : 'text-left'}
+              `}
+              style={{
+                ...transitionStyle,
+                opacity: showTimestamp || isLast ? 1 : 0,
+              }}
+            >
+              {formatTime(message.timestamp)}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
-}
+});
 
 /**
  * 头像组件
+ * 性能优化：使用 memo 避免不必要的重渲染
  */
-function Avatar({ role }: { role: 'user' | 'model' }) {
+const Avatar = memo(function Avatar({ role }: { role: 'user' | 'model' }) {
   const isUser = role === 'user';
 
   return (
@@ -364,17 +457,18 @@ function Avatar({ role }: { role: 'user' | 'model' }) {
       )}
     </div>
   );
-}
+});
 
 /**
  * 附件列表组件
+ * 性能优化：使用 memo 避免不必要的重渲染
  */
 interface AttachmentListProps {
   attachments: Attachment[];
   isUser: boolean;
 }
 
-function AttachmentList({ attachments, isUser }: AttachmentListProps) {
+const AttachmentList = memo(function AttachmentList({ attachments, isUser }: AttachmentListProps) {
   return (
     <div className={`flex flex-wrap gap-2 mb-2 ${isUser ? 'justify-end' : ''}`}>
       {attachments.map((attachment) => (
@@ -382,12 +476,13 @@ function AttachmentList({ attachments, isUser }: AttachmentListProps) {
       ))}
     </div>
   );
-}
+});
 
 /**
  * 附件预览组件
+ * 性能优化：使用 memo 避免不必要的重渲染
  */
-function AttachmentPreview({ attachment }: { attachment: Attachment }) {
+const AttachmentPreview = memo(function AttachmentPreview({ attachment }: { attachment: Attachment }) {
   if (attachment.type === 'image') {
     return (
       <div className="relative group">
@@ -442,13 +537,14 @@ function AttachmentPreview({ attachment }: { attachment: Attachment }) {
       </div>
     </div>
   );
-}
+});
 
 
 /**
  * 空状态组件
+ * 性能优化：使用 memo 避免不必要的重渲染
  */
-function EmptyState() {
+const EmptyState = memo(function EmptyState() {
   return (
     <div className="flex flex-col items-center text-center pt-24 pb-12">
       <div className="
@@ -467,12 +563,13 @@ function EmptyState() {
       </p>
     </div>
   );
-}
+});
 
 /**
  * 打字指示器动画组件
+ * 性能优化：使用 memo 避免不必要的重渲染
  */
-function TypingIndicator() {
+const TypingIndicator = memo(function TypingIndicator() {
   return (
     <div className="flex items-center gap-1 py-1">
       <span 
@@ -489,12 +586,13 @@ function TypingIndicator() {
       />
     </div>
   );
-}
+});
 
 /**
  * 打字光标组件
+ * 性能优化：使用 memo 避免不必要的重渲染
  */
-function TypingCursor() {
+const TypingCursor = memo(function TypingCursor() {
   return (
     <span className="
       inline-block w-0.5 h-4 ml-0.5 
@@ -502,7 +600,7 @@ function TypingCursor() {
       animate-pulse
     " />
   );
-}
+});
 
 // ============ 图标组件 ============
 

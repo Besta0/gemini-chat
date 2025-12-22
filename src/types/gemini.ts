@@ -27,6 +27,17 @@ export interface ThoughtPart {
   text: string;
   /** 标识这是思维链内容 */
   thought: true;
+  /** 思维链签名（用于画图模型连续对话） */
+  thoughtSignature?: string;
+}
+
+/**
+ * 思维链签名部分（用于画图模型连续对话）
+ * 需求: 2.6
+ */
+export interface ThoughtSignaturePart {
+  /** 思维链签名 */
+  thoughtSignature: string;
 }
 
 /**
@@ -42,14 +53,13 @@ export interface ImageConfig {
 
 /**
  * Gemini API 请求体
+ * 注意: thinkingConfig 已移至 generationConfig 内部
  */
 export interface GeminiRequest {
   contents: GeminiContent[];
   generationConfig?: GenerationConfig;
   safetySettings?: SafetySetting[];
   systemInstruction?: GeminiContent;
-  /** 思考配置（Gemini 3 系列） */
-  thinkingConfig?: ThinkingConfig;
   /** 图片生成配置（Gemini 3 Pro Image） */
   imageConfig?: ImageConfig;
 }
@@ -63,9 +73,9 @@ export interface GeminiContent {
 }
 
 /**
- * Gemini 内容部分，可以是文本、内联数据（图片/文件）或思维链
+ * Gemini 内容部分，可以是文本、内联数据（图片/文件）、思维链或思维链签名
  */
-export type GeminiPart = GeminiTextPart | GeminiInlineDataPart | ThoughtPart;
+export type GeminiPart = GeminiTextPart | GeminiInlineDataPart | ThoughtPart | ThoughtSignaturePart;
 
 /**
  * 文本类型的内容部分
@@ -87,6 +97,7 @@ export interface GeminiInlineDataPart {
 /**
  * 生成配置参数
  * 需求: 2.1
+ * 注意: thinkingConfig 必须放在 generationConfig 内部
  */
 export interface GenerationConfig {
   /** 温度参数，控制随机性，范围 0-2，默认 1 */
@@ -99,6 +110,10 @@ export interface GenerationConfig {
   maxOutputTokens?: number;
   /** 停止序列数组 */
   stopSequences?: string[];
+  /** 响应模态（用于画图模型支持连续对话） */
+  responseModalities?: ('TEXT' | 'IMAGE')[];
+  /** 思考配置（必须放在 generationConfig 内部） */
+  thinkingConfig?: ThinkingConfig;
 }
 
 // ============ 安全设置相关类型 ============

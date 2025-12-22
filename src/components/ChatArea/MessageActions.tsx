@@ -3,7 +3,7 @@
  * 需求: 3.1, 4.1, 7.2, 8.4 - 编辑、复制、重新生成、查看详情按钮
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, memo } from 'react';
 import type { Message } from '../../types/models';
 import { MessageDetailModal } from './MessageDetailModal';
 
@@ -75,17 +75,12 @@ export function MessageActions({
     setShowDetail(false);
   }, []);
 
-  // 如果不可见，返回空
-  if (!visible) {
-    return null;
-  }
-
   return (
     <>
-      <div className={`
-        flex items-center gap-1 mt-1
-        ${isUserMessage ? 'justify-end' : 'justify-start'}
-      `}>
+      {/* 操作按钮容器 - 使用正常流式布局 */}
+      <div 
+        className="flex items-center gap-1"
+      >
         {/* 复制按钮 */}
         <ActionButton
           onClick={handleCopy}
@@ -106,12 +101,13 @@ export function MessageActions({
           </ActionButton>
         )}
 
-        {/* AI 消息：重新生成按钮 */}
+        {/* AI 消息：重新生成按钮 - 需求 4.5: 加载状态旋转图标 */}
         {!isUserMessage && onRegenerate && (
           <ActionButton 
             onClick={onRegenerate} 
             title="重新生成"
             disabled={isRegenerating}
+            isLoading={isRegenerating}
           >
             <RegenerateIcon className={`w-3.5 h-3.5 ${isRegenerating ? 'animate-spin' : ''}`} />
           </ActionButton>
@@ -137,33 +133,37 @@ export function MessageActions({
 
 /**
  * 操作按钮基础组件
+ * 需求 4.3: 禁用状态50%透明度
+ * 需求 4.5: 加载状态指示器
+ * 性能优化：使用 memo 避免不必要的重渲染
  */
 interface ActionButtonProps {
   onClick: () => void;
   title: string;
   disabled?: boolean;
+  isLoading?: boolean;
   children: React.ReactNode;
 }
 
-function ActionButton({ onClick, title, disabled = false, children }: ActionButtonProps) {
+const ActionButton = memo(function ActionButton({ onClick, title, disabled = false, isLoading = false, children }: ActionButtonProps) {
   return (
     <button
       onClick={onClick}
       title={title}
-      disabled={disabled}
-      className="
+      disabled={disabled || isLoading}
+      className={`
         p-1.5 rounded-md
         text-neutral-400 hover:text-neutral-600
         dark:text-neutral-500 dark:hover:text-neutral-300
         hover:bg-neutral-100 dark:hover:bg-neutral-700
-        transition-colors
-        disabled:opacity-50 disabled:cursor-not-allowed
-      "
+        transition-all duration-200
+        ${disabled || isLoading ? 'opacity-50 cursor-not-allowed' : 'opacity-100'}
+      `}
     >
       {children}
     </button>
   );
-}
+});
 
 // ============ 图标组件 ============
 
