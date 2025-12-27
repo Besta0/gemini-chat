@@ -356,6 +356,7 @@ export function ChatConfigPanel({
               value={config.advancedConfig?.thinkingLevel || 'high'}
               onChange={handleThinkingLevelChange}
               variant="full"
+              modelId={config.model}
             />
           )}
           {thinkingConfigType === 'budget' && thinkingBudgetConfig && (

@@ -30,13 +30,15 @@ export interface Conversation {
 
 /**
  * Token 使用量
- * 需求: 7.1, 7.2
+ * 需求: 7.1, 7.2, 1.4
  */
 export interface MessageTokenUsage {
   /** 输入 Token 数 */
   promptTokens: number;
   /** 输出 Token 数 */
   completionTokens: number;
+  /** 思维链 Token 数 */
+  thoughtsTokens?: number;
   /** 总 Token 数 */
   totalTokens: number;
 }
@@ -155,8 +157,12 @@ export type ApiProvider = 'gemini' | 'openai';
 /**
  * 思考深度级别
  * 需求: 4.1
+ * - 'minimal': 最少思考，最快响应
+ * - 'low': 低度思考，快速响应
+ * - 'medium': 中度思考，平衡速度和深度
+ * - 'high': 深度思考，适合复杂问题
  */
-export type ThinkingLevel = 'low' | 'high';
+export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high';
 
 /**
  * 思考配置类型
@@ -194,9 +200,9 @@ export type MediaResolution =
 
 /**
  * 图片宽高比
- * 需求: 2.1, 2.2
+ * 需求: 2.1, 2.2, 7.2
  */
-export type ImageAspectRatio = '1:1' | '16:9' | '9:16' | '4:3' | '3:4';
+export type ImageAspectRatio = '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3' | '5:4' | '4:5' | '21:9';
 
 /**
  * 图片分辨率
@@ -310,6 +316,16 @@ export const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     thinkingConfigType: 'level',
     supportsThoughtSummary: true,
   },
+  'gemini-3-flash-preview': {
+    supportsThinking: true,
+    supportsImageGeneration: false,
+    supportsMediaResolution: true,
+    maxInputTokens: 1000000,
+    maxOutputTokens: 64000,
+    // 思考配置 - 支持 minimal/low/medium/high 四个等级
+    thinkingConfigType: 'level',
+    supportsThoughtSummary: true,
+  },
   'gemini-3-pro-image-preview': {
     supportsThinking: false,
     supportsImageGeneration: true,
@@ -415,6 +431,7 @@ export function getModelCapabilities(modelId: string): ModelCapabilities {
 export const GEMINI_MODELS: ModelInfo[] = [
   // Gemini 3 系列 - 最智能的模型
   { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro', description: '最智能的多模态理解模型，最强大的代理和编程模型' },
+  { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', description: '快速智能模型，支持四级思考深度调节' },
   { id: 'gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image', description: '支持图像生成的 Gemini 3 Pro' },
   
   // Gemini 2.5 Pro 系列 - 高级思考模型

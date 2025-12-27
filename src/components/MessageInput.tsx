@@ -6,10 +6,12 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import type { Attachment } from '../types/models';
+import type { Attachment, ImageGenerationConfig } from '../types/models';
 import { validateFile, fileToBase64, getFileMimeType, isImageFile, formatFileSize } from '../services/file';
 import { useReducedMotion } from './motion';
 import { durationValues, easings, touchTargets } from '../design/tokens';
+import { getModelCapabilities } from '../types/models';
+import { ImageConfigToolbar } from './MessageInput/ImageConfigToolbar';
 
 interface MessageInputProps {
   /** 发送消息回调 */
@@ -30,6 +32,16 @@ interface MessageInputProps {
   isEditing?: boolean;
   /** 取消编辑回调 - 需求: 3.3 */
   onCancelEdit?: () => void;
+  /** 是否启用联网搜索 - 需求: 联网搜索 */
+  webSearchEnabled?: boolean;
+  /** 切换联网搜索回调 - 需求: 联网搜索 */
+  onWebSearchToggle?: () => void;
+  /** 当前模型 ID - 用于判断是否显示图片配置 - 需求: 1.1, 1.2 */
+  currentModel?: string;
+  /** 当前图片配置 - 需求: 1.1, 1.2 */
+  imageConfig?: ImageGenerationConfig;
+  /** 图片配置变更回调 - 需求: 1.1, 1.2 */
+  onImageConfigChange?: (config: Partial<ImageGenerationConfig>) => void;
 }
 
 // 输入框高度限制常量（用于属性测试）
@@ -69,6 +81,11 @@ export function MessageInput({
   editingContent,
   isEditing = false,
   onCancelEdit,
+  webSearchEnabled = false,
+  onWebSearchToggle,
+  currentModel,
+  imageConfig,
+  onImageConfigChange,
 }: MessageInputProps) {
   const [content, setContent] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -112,6 +129,15 @@ export function MessageInput({
       return () => clearTimeout(timer);
     }
   }, [error]);
+
+  // 判断是否显示图片配置工具栏 - 需求: 1.1, 1.2, 1.3, 1.4
+  const showImageConfig = (() => {
+    if (!currentModel || !imageConfig || !onImageConfigChange) {
+      return false;
+    }
+    const capabilities = getModelCapabilities(currentModel);
+    return capabilities.supportsImageGeneration === true;
+  })();
 
 
 
@@ -366,6 +392,7 @@ export function MessageInput({
               disabled:opacity-50 disabled:cursor-not-allowed
               text-base leading-6
               border-2 outline-none
+              message-input-textarea
               ${isFocused
                 ? 'border-primary-500 shadow-lg shadow-primary-500/10'
                 : 'border-neutral-200 dark:border-neutral-700 shadow-sm'
@@ -374,6 +401,7 @@ export function MessageInput({
             style={{
               ...transitionStyle,
               minHeight: `${INPUT_MIN_ROWS * LINE_HEIGHT_PX + 24}px`,
+              overflowY: 'auto',
             }}
           />
         </div>
@@ -444,7 +472,41 @@ export function MessageInput({
             <PaperclipIcon className="w-4 h-4" />
           </ToolbarButton>
 
+          {/* 分隔线 */}
+          <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-1" />
+
+          {/* 联网搜索按钮 - 需求: 联网搜索 */}
+          <ToolbarButton
+            onClick={() => onWebSearchToggle?.()}
+            disabled={isDisabled}
+            title={webSearchEnabled ? '关闭联网搜索' : '开启联网搜索'}
+            active={webSearchEnabled}
+            reducedMotion={reducedMotion}
+          >
+            <GlobeIcon className="w-4 h-4" />
+          </ToolbarButton>
+
+          {/* 图片配置工具栏 - 需求: 2.1, 3.1 */}
+          {showImageConfig && imageConfig && onImageConfigChange && (
+            <>
+              {/* 分隔线 */}
+              <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-1" />
+              <ImageConfigToolbar
+                config={imageConfig}
+                onChange={onImageConfigChange}
+                disabled={isDisabled}
+              />
+            </>
+          )}
+
           <div className="flex-1" />
+
+          {/* 联网搜索状态指示 */}
+          {webSearchEnabled && (
+            <span className="text-xs text-primary-500 dark:text-primary-400 hidden sm:inline">
+              联网搜索已开启
+            </span>
+          )}
 
           {/* 提示文字 */}
           <span className="text-xs text-neutral-400 dark:text-neutral-500 hidden sm:inline">
@@ -713,6 +775,22 @@ function EditIndicatorIcon({ className }: { className?: string }) {
         strokeLinejoin="round"
         strokeWidth={2}
         d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+      />
+    </svg>
+  );
+}
+
+/**
+ * 地球图标 - 需求: 联网搜索
+ */
+function GlobeIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"
       />
     </svg>
   );

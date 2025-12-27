@@ -26,6 +26,8 @@ export interface ChatWindowConfig {
   advancedConfig?: ModelAdvancedConfig;
   /** 对话级别流式响应设置（undefined 表示使用全局设置） */
   streamingEnabled?: boolean;
+  /** 是否启用联网搜索（默认 false） */
+  webSearchEnabled?: boolean;
 }
 
 // ============ 子话题 ============
@@ -110,6 +112,7 @@ export const DEFAULT_CHAT_WINDOW_CONFIG: ChatWindowConfig = {
   },
   systemInstruction: '',
   safetySettings: [],
+  webSearchEnabled: false,
 };
 
 /**

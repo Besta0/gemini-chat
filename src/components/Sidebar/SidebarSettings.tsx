@@ -361,6 +361,7 @@ function AdvancedConfigGroup() {
             value={advancedConfig?.thinkingLevel ?? 'high'}
             onChange={handleThinkingLevelChange}
             variant="compact"
+            modelId={currentModel}
           />
         </div>
       )}

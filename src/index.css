@@ -78,6 +78,28 @@ html, body, #root {
   background-color: var(--color-neutral-500);
 }
 
+/* 消息输入框专用滚动条 - 只在需要时显示 */
+.message-input-textarea::-webkit-scrollbar {
+  width: 4px;
+}
+
+.message-input-textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.message-input-textarea::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: var(--radius-full);
+}
+
+.message-input-textarea:hover::-webkit-scrollbar-thumb {
+  background-color: var(--color-neutral-300);
+}
+
+.dark .message-input-textarea:hover::-webkit-scrollbar-thumb {
+  background-color: var(--color-neutral-600);
+}
+
 /* Markdown 内容样式 */
 .markdown-content {
   color: var(--text-primary);
@@ -141,4 +163,20 @@ html, body, #root {
 
 .animate-fade-in {
   animation: fade-in 0.2s ease-out forwards;
+}
+
+/* 下拉菜单动画 */
+@keyframes dropdown-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-dropdown-in {
+  animation: dropdown-in 0.15s ease-out forwards;
 }

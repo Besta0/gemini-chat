@@ -23,6 +23,7 @@ export interface ImageConfigPanelProps {
 
 /**
  * 图片宽高比选项配置
+ * Requirements: 7.1, 7.3
  */
 const ASPECT_RATIO_OPTIONS: Array<{
   value: ImageAspectRatio;
@@ -34,6 +35,11 @@ const ASPECT_RATIO_OPTIONS: Array<{
   { value: '9:16', label: '9:16', icon: '▯' },
   { value: '4:3', label: '4:3', icon: '▭' },
   { value: '3:4', label: '3:4', icon: '▯' },
+  { value: '3:2', label: '3:2', icon: '▭' },
+  { value: '2:3', label: '2:3', icon: '▯' },
+  { value: '5:4', label: '5:4', icon: '▭' },
+  { value: '4:5', label: '4:5', icon: '▯' },
+  { value: '21:9', label: '21:9', icon: '▭' },
 ];
 
 /**

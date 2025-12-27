@@ -60,6 +60,15 @@ export const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     thinkingConfigType: 'level',
     supportsThoughtSummary: true,
   },
+  'gemini-3-flash-preview': {
+    supportsThinking: true,
+    supportsMediaResolution: true,
+    maxInputTokens: 1048576,
+    maxOutputTokens: 65536,
+    // 思考配置 - 支持 minimal/low/medium/high 四个等级
+    thinkingConfigType: 'level',
+    supportsThoughtSummary: true,
+  },
   'gemini-3-pro-image-preview': {
     supportsThinking: false,
     supportsMediaResolution: false,

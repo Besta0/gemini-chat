@@ -9,13 +9,15 @@ import { create } from 'zustand';
 
 /**
  * Token 使用量
- * 需求: 7.1
+ * 需求: 7.1, 1.4
  */
 export interface TokenUsage {
   /** 输入 Token 数 */
   promptTokens: number;
   /** 输出 Token 数 */
   completionTokens: number;
+  /** 思维链 Token 数 */
+  thoughtsTokens?: number;
   /** 总 Token 数 */
   totalTokens: number;
 }

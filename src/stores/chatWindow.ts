@@ -110,6 +110,8 @@ interface ChatWindowState {
   error: string | null;
   /** 流式响应文本 */
   streamingText: string;
+  /** 流式思维链内容 - 需求: 4.1 */
+  streamingThought: string;
   /** 是否已初始化 */
   initialized: boolean;
   /** 当前请求的 AbortController - 需求: 5.1, 5.2 */
@@ -170,6 +172,8 @@ interface ChatWindowActions {
   clearError: () => void;
   /** 清除流式文本 */
   clearStreamingText: () => void;
+  /** 清除流式思维链内容 - 需求: 4.1 */
+  clearStreamingThought: () => void;
   
   // 排序操作
   /** 重新排序窗口列表 */
@@ -219,6 +223,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
   isSending: false,
   error: null,
   streamingText: '',
+  streamingThought: '',
   initialized: false,
   currentRequestController: null,
 
@@ -663,6 +668,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
     // 创建 AbortController 用于取消请求 - 需求: 5.1, 5.2
     const abortController = new AbortController();
 
+    // 需求: 4.2 - 在流式开始时清空 streamingThought 和 streamingText
     set((state) => ({
       windows: state.windows.map((w) =>
         w.id === windowId ? updatedWindow : w
@@ -670,6 +676,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
       isSending: true,
       error: null,
       streamingText: '',
+      streamingThought: '',
       currentRequestController: abortController,
     }));
 
@@ -714,6 +721,22 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
       const modelCapabilities = getModelCapabilities(window.config.model);
       const isImageGenerationModel = modelCapabilities.supportsImageGeneration === true;
 
+      // 对于图片生成模型，解析提示词中的配置参数
+      // 需求: 5.1, 5.2, 5.3, 6.1, 6.2
+      if (isImageGenerationModel) {
+        const { parseImagePrompt, mergeImageConfig } = await import('../services/promptParser');
+        const { DEFAULT_IMAGE_GENERATION_CONFIG } = await import('../types/models');
+        
+        // 解析提示词中的宽高比和分辨率参数
+        // 需求: 6.1 - 不修改原始提示词
+        const parseResult = parseImagePrompt(content);
+        
+        // 合并配置：提示词参数优先于设置参数
+        // 需求: 4.1, 4.2, 4.3, 4.4, 4.5
+        const currentImageConfig = effectiveAdvancedConfig.imageConfig || DEFAULT_IMAGE_GENERATION_CONFIG;
+        effectiveAdvancedConfig.imageConfig = mergeImageConfig(parseResult, currentImageConfig);
+      }
+
       // 转换消息为 Gemini API 格式
       const geminiContents = messagesToGeminiContents(messagesWithUser, isImageGenerationModel);
 
@@ -722,16 +745,21 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
       // 需求: 10.4 - 非流式输出完整生成后一次性显示
       // 需求: 4.3 - 解析并保存思维链内容
       let fullResponse = '';
+      let fullThought = ''; // 用于累积思维链内容 - 需求: 4.2
       let thoughtSummary: string | undefined;
       let thoughtSignature: string | undefined; // 用于画图模型连续对话
       let generatedImages: ImageExtractionResult[] | undefined;
       // 需求: 8.2, 8.3, 8.4 - 耗时数据
       let duration: number | undefined;
       let ttfb: number | undefined;
+      // 需求: 1.3 - Token 使用量
+      let tokenUsage: import('../types/models').MessageTokenUsage | undefined;
       
       if (streamingEnabled) {
         // 流式响应（支持思维链提取）
         // 需求: 5.2 - 传递 AbortSignal 用于取消请求
+        // 需求: 联网搜索 - 传递 webSearchEnabled 配置
+        // 需求: 4.2 - 传递 onThoughtChunk 回调更新 streamingThought
         const result = await sendMessageWithThoughts(
           geminiContents,
           effectiveApiConfig,
@@ -743,7 +771,13 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
             set({ streamingText: fullResponse });
           },
           effectiveAdvancedConfig,
-          abortController.signal
+          abortController.signal,
+          window.config.webSearchEnabled,
+          // 需求: 4.2 - onThoughtChunk 回调，实时更新 streamingThought
+          (thoughtChunk) => {
+            fullThought += thoughtChunk;
+            set({ streamingThought: fullThought });
+          }
         );
         fullResponse = result.text;
         thoughtSummary = result.thoughtSummary;
@@ -752,6 +786,8 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
         // 需求: 8.4 - 保存耗时数据
         duration = result.duration;
         ttfb = result.ttfb;
+        // 需求: 1.3 - 保存 Token 使用量
+        tokenUsage = result.tokenUsage;
       } else {
         // 非流式响应
         fullResponse = await sendGeminiMessageNonStreaming(
@@ -780,8 +816,8 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
         }
       }
 
-      // 创建 AI 响应消息（包含思维链摘要、签名和耗时数据）
-      // 需求: 4.3, 8.4, 2.6
+      // 创建 AI 响应消息（包含思维链摘要、签名、耗时数据和 Token 使用量）
+      // 需求: 4.3, 8.4, 2.6, 1.3
       const aiMessage: Message = {
         id: generateId(),
         role: 'model',
@@ -792,6 +828,8 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
         // 需求: 8.4 - 保存耗时数据
         duration,
         ttfb,
+        // 需求: 1.3 - 保存 Token 使用量
+        tokenUsage,
       };
 
       // 更新子话题消息
@@ -817,6 +855,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
         ),
         isSending: false,
         streamingText: '',
+        streamingThought: '', // 需求: 4.4 - 流式完成后清空 streamingThought
         currentRequestController: null,
       }));
 
@@ -863,6 +902,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
             ),
             isSending: false,
             streamingText: '',
+            streamingThought: '', // 需求: 4.3 - 取消请求时清空 streamingThought
             currentRequestController: null,
           }));
 
@@ -871,6 +911,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
           set({
             isSending: false,
             streamingText: '',
+            streamingThought: '', // 需求: 4.3 - 取消请求时清空 streamingThought
             currentRequestController: null,
           });
         }
@@ -895,6 +936,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
         isSending: false,
         error: errorMessage,
         streamingText: '',
+        streamingThought: '', // 需求: 4.3 - 错误时清空 streamingThought
         currentRequestController: null,
       });
     }
@@ -927,6 +969,11 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
   // 清除流式文本
   clearStreamingText: () => {
     set({ streamingText: '' });
+  },
+
+  // 清除流式思维链内容 - 需求: 4.1
+  clearStreamingThought: () => {
+    set({ streamingThought: '' });
   },
 
   // 重新排序窗口列表
@@ -1077,7 +1124,8 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
     // 创建 AbortController 用于取消请求 - 需求: 5.1, 5.2
     const abortController = new AbortController();
 
-    set({ isSending: true, error: null, streamingText: '', currentRequestController: abortController });
+    // 需求: 4.2 - 在流式开始时清空 streamingThought 和 streamingText
+    set({ isSending: true, error: null, streamingText: '', streamingThought: '', currentRequestController: abortController });
 
     try {
       // 获取 API 配置
@@ -1110,14 +1158,19 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
       const geminiContents = messagesToGeminiContents(contextMessages, isImageGenerationModel);
 
       let fullResponse = '';
+      let fullThought = ''; // 用于累积思维链内容 - 需求: 4.2
       let thoughtSummary: string | undefined;
       let thoughtSignature: string | undefined; // 用于画图模型连续对话
       // 需求: 8.2, 8.3, 8.4 - 耗时数据
       let duration: number | undefined;
       let ttfb: number | undefined;
+      // 需求: 1.3 - Token 使用量
+      let tokenUsage: import('../types/models').MessageTokenUsage | undefined;
 
       if (streamingEnabled) {
         // 需求: 5.2 - 传递 AbortSignal 用于取消请求
+        // 需求: 联网搜索 - 传递 webSearchEnabled 配置
+        // 需求: 4.2 - 传递 onThoughtChunk 回调更新 streamingThought
         const result = await sendMessageWithThoughts(
           geminiContents,
           effectiveApiConfig,
@@ -1129,7 +1182,13 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
             set({ streamingText: fullResponse });
           },
           effectiveAdvancedConfig,
-          abortController.signal
+          abortController.signal,
+          window.config.webSearchEnabled,
+          // 需求: 4.2 - onThoughtChunk 回调，实时更新 streamingThought
+          (thoughtChunk) => {
+            fullThought += thoughtChunk;
+            set({ streamingThought: fullThought });
+          }
         );
         fullResponse = result.text;
         thoughtSummary = result.thoughtSummary;
@@ -1137,6 +1196,8 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
         // 需求: 8.4 - 保存耗时数据
         duration = result.duration;
         ttfb = result.ttfb;
+        // 需求: 1.3 - 保存 Token 使用量
+        tokenUsage = result.tokenUsage;
       } else {
         fullResponse = await sendGeminiMessageNonStreaming(
           geminiContents,
@@ -1149,7 +1210,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
       }
 
       // 更新消息内容，保持 ID 不变
-      // 需求: 4.3, 8.4, 2.6 - Property 8: 重新生成消息替换
+      // 需求: 4.3, 8.4, 2.6, 1.3 - Property 8: 重新生成消息替换
       const updatedMessage: Message = {
         ...originalMessage,
         content: fullResponse,
@@ -1159,6 +1220,8 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
         // 需求: 8.4 - 保存耗时数据
         duration,
         ttfb,
+        // 需求: 1.3 - 保存 Token 使用量
+        tokenUsage,
       };
 
       const updatedMessages = [...subTopic.messages];
@@ -1186,6 +1249,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
         ),
         isSending: false,
         streamingText: '',
+        streamingThought: '', // 需求: 4.4 - 流式完成后清空 streamingThought
         currentRequestController: null,
       }));
 
@@ -1234,6 +1298,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
             ),
             isSending: false,
             streamingText: '',
+            streamingThought: '', // 需求: 4.3 - 取消请求时清空 streamingThought
             currentRequestController: null,
           }));
 
@@ -1243,6 +1308,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
           set({
             isSending: false,
             streamingText: '',
+            streamingThought: '', // 需求: 4.3 - 取消请求时清空 streamingThought
             currentRequestController: null,
           });
         }
@@ -1268,6 +1334,7 @@ export const useChatWindowStore = create<ChatWindowStore>((set, get) => ({
         isSending: false,
         error: errorMessage,
         streamingText: '',
+        streamingThought: '', // 需求: 4.3 - 错误时清空 streamingThought
         currentRequestController: null,
       });
     }

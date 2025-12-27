@@ -33,6 +33,14 @@ export interface VirtualMessageListProps {
   isSending?: boolean;
   /** 流式响应文本 */
   streamingText?: string;
+  /** 流式思维链内容 - 需求 3.3, 3.4 */
+  streamingThought?: string;
+  /** 错误信息 */
+  error?: string | null;
+  /** 重试回调 */
+  onRetry?: () => void;
+  /** 关闭错误提示回调 */
+  onDismissError?: () => void;
   /** 渲染消息内容的函数 */
   renderContent?: (content: string) => React.ReactNode;
   /** 消息编辑回调 - 需求 1.4, 1.5: 支持 resend 参数 */
@@ -41,6 +49,8 @@ export interface VirtualMessageListProps {
   onRegenerateMessage?: (messageId: string) => void;
   /** 虚拟滚动配置 */
   config?: Partial<VirtualScrollConfig>;
+  /** 正在重新生成的消息 ID - 需求 1.1, 2.1 */
+  regeneratingMessageId?: string | null;
 }
 
 // ============ 默认配置 ============
@@ -65,10 +75,15 @@ export function VirtualMessageList({
   messages,
   isSending = false,
   streamingText = '',
+  streamingThought = '',
+  error = null,
+  onRetry,
+  onDismissError,
   renderContent,
   onEditMessage,
   onRegenerateMessage,
   config: userConfig,
+  regeneratingMessageId = null,
 }: VirtualMessageListProps) {
   const config = { ...DEFAULT_CONFIG, ...userConfig };
   const parentRef = useRef<HTMLDivElement>(null);
@@ -79,9 +94,12 @@ export function VirtualMessageList({
   // 上一次消息数量（用于检测新消息）
   const prevMessageCountRef = useRef(messages.length);
 
+  // 判断是否为新消息发送（而非重新生成）- 需求 2.1, 2.2, 2.3
+  const isNewMessageSending = isSending && !regeneratingMessageId;
 
   // 计算总项数（消息 + 流式响应 + 加载指示器）
-  const totalCount = messages.length + (isSending ? 1 : 0);
+  // 只有在发送新消息时才增加行数，重新生成时保持不变
+  const totalCount = messages.length + (isNewMessageSending ? 1 : 0);
 
   // 虚拟化器配置
   const virtualizer = useVirtualizer({
@@ -174,8 +192,12 @@ export function VirtualMessageList({
         >
           {virtualItems.map((virtualItem) => {
             const index = virtualItem.index;
-            const isStreamingItem = index === messages.length && isSending;
+            // 更新 isStreamingItem 判断 - 需求 1.1, 2.1
+            const isStreamingItem = index === messages.length && isNewMessageSending;
             const message = isStreamingItem ? null : messages[index];
+            
+            // 检查当前消息是否正在重新生成 - 需求 1.1, 1.2, 1.3
+            const isRegeneratingThis = message?.id === regeneratingMessageId && isSending;
 
             return (
               <div
@@ -192,13 +214,14 @@ export function VirtualMessageList({
                 className="pb-4"
               >
                 {isStreamingItem ? (
-                  // 流式响应或加载指示器
+                  // 新消息的流式响应或加载指示器 - 需求 3.3, 3.4
                   <StreamingMessage
                     streamingText={streamingText}
+                    streamingThought={streamingThought}
                     renderContent={renderMessageContent}
                   />
                 ) : message ? (
-                  // 普通消息
+                  // 普通消息或重新生成中的消息
                   <MessageItem
                     message={message}
                     renderContent={renderMessageContent}
@@ -206,12 +229,24 @@ export function VirtualMessageList({
                     reducedMotion={reducedMotion}
                     onEdit={onEditMessage}
                     onRegenerate={onRegenerateMessage}
+                    isRegenerating={isRegeneratingThis}
+                    regeneratingContent={isRegeneratingThis ? streamingText : ''}
+                    regeneratingThought={isRegeneratingThis ? streamingThought : ''}
                   />
                 ) : null}
               </div>
             );
           })}
         </div>
+      )}
+
+      {/* 错误提示 - 显示API错误并提供重试选项 */}
+      {error && !isSending && (
+        <ErrorMessage 
+          error={error} 
+          onRetry={onRetry} 
+          onDismiss={onDismissError}
+        />
       )}
     </div>
   );
@@ -221,18 +256,93 @@ export function VirtualMessageList({
 // ============ 子组件 ============
 
 /**
+ * 错误消息组件
+ * 显示API错误信息，提供重试和关闭选项
+ */
+interface ErrorMessageProps {
+  error: string;
+  onRetry?: () => void;
+  onDismiss?: () => void;
+}
+
+const ErrorMessage = memo(function ErrorMessage({ error, onRetry, onDismiss }: ErrorMessageProps) {
+  return (
+    <div className="flex gap-3 animate-fadeIn pb-4">
+      <Avatar role="model" />
+      <div className="flex-1 min-w-0 max-w-[85%]">
+        <div className="px-4 py-3 rounded-2xl rounded-bl-md bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 shadow-sm">
+          {/* 错误图标和标题 */}
+          <div className="flex items-center gap-2 mb-2">
+            <ErrorIcon className="w-5 h-5 text-red-500 dark:text-red-400 flex-shrink-0" />
+            <span className="text-sm font-medium text-red-700 dark:text-red-300">
+              请求失败
+            </span>
+          </div>
+          
+          {/* 错误详情 */}
+          <p className="text-sm text-red-600 dark:text-red-400 mb-3 break-words">
+            {error}
+          </p>
+          
+          {/* 操作按钮 */}
+          <div className="flex items-center gap-2">
+            {onRetry && (
+              <button
+                onClick={onRetry}
+                className="
+                  inline-flex items-center gap-1.5 px-3 py-1.5
+                  text-sm font-medium text-white
+                  bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700
+                  rounded-lg transition-colors
+                  shadow-sm hover:shadow
+                "
+              >
+                <RetryIcon className="w-4 h-4" />
+                重新生成
+              </button>
+            )}
+            {onDismiss && (
+              <button
+                onClick={onDismiss}
+                className="
+                  inline-flex items-center gap-1.5 px-3 py-1.5
+                  text-sm font-medium
+                  text-red-600 dark:text-red-400
+                  hover:bg-red-100 dark:hover:bg-red-900/30
+                  rounded-lg transition-colors
+                "
+              >
+                关闭
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+/**
  * 流式响应消息组件
+ * 需求 3.3, 3.4: 在流式过程中显示思维链内容
  */
 interface StreamingMessageProps {
   streamingText: string;
+  streamingThought?: string;
   renderContent: (content: string) => React.ReactNode;
 }
 
-function StreamingMessage({ streamingText, renderContent }: StreamingMessageProps) {
+function StreamingMessage({ streamingText, streamingThought = '', renderContent }: StreamingMessageProps) {
   return (
     <div className="flex gap-3 animate-fadeIn">
       <Avatar role="model" />
       <div className="flex-1 min-w-0 max-w-[85%]">
+        {/* 流式思维链卡片 - 需求 3.3, 3.4 */}
+        {streamingThought && (
+          <ThoughtSummaryCard content={streamingThought} defaultExpanded={true} />
+        )}
+        
+        {/* 流式响应内容 */}
         <MessageBubble isUser={false}>
           {streamingText ? (
             <>
@@ -255,9 +365,11 @@ function StreamingMessage({ streamingText, renderContent }: StreamingMessageProp
 interface MessageBubbleProps {
   isUser: boolean;
   children: React.ReactNode;
+  /** 是否正在重新生成 - 需求 3.1, 3.2 */
+  isRegenerating?: boolean;
 }
 
-const MessageBubble = memo(function MessageBubble({ isUser, children }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ isUser, children, isRegenerating = false }: MessageBubbleProps) {
   return (
     <div
       className={`
@@ -266,6 +378,7 @@ const MessageBubble = memo(function MessageBubble({ isUser, children }: MessageB
           ? 'message-user rounded-br-md shadow-md shadow-green-500/20 dark:shadow-green-400/10'
           : 'message-ai rounded-bl-md shadow-sm shadow-neutral-200/50 dark:shadow-neutral-900/50'
         }
+        ${isRegenerating ? 'ring-2 ring-purple-400/50 dark:ring-purple-500/50 animate-pulse' : ''}
       `}
     >
       {children}
@@ -284,6 +397,12 @@ interface MessageItemProps {
   reducedMotion: boolean;
   onEdit?: (messageId: string, newContent: string, resend: boolean) => void;
   onRegenerate?: (messageId: string) => void;
+  /** 是否正在重新生成 - 需求 3.1 */
+  isRegenerating?: boolean;
+  /** 重新生成中的流式内容 - 需求 1.2, 1.3 */
+  regeneratingContent?: string;
+  /** 重新生成中的流式思维链 - 需求 3.3, 3.4 */
+  regeneratingThought?: string;
 }
 
 const MessageItem = memo(function MessageItem({ 
@@ -293,6 +412,9 @@ const MessageItem = memo(function MessageItem({
   reducedMotion,
   onEdit,
   onRegenerate,
+  isRegenerating = false,
+  regeneratingContent = '',
+  regeneratingThought = '',
 }: MessageItemProps) {
   const isUser = message.role === 'user';
   const [showTimestamp, setShowTimestamp] = useState(false);
@@ -340,11 +462,14 @@ const MessageItem = memo(function MessageItem({
     }
   }, [message.id, onEdit]);
 
+  // 确定要显示的内容 - 需求 1.2, 1.3
+  const displayContent = isRegenerating ? regeneratingContent : message.content;
+
   return (
     <div 
       className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}
       onMouseEnter={() => {
-        if (!isEditing) {
+        if (!isEditing && !isRegenerating) {
           setShowTimestamp(true);
           setShowActions(true);
         }
@@ -374,15 +499,38 @@ const MessageItem = memo(function MessageItem({
             <AttachmentList attachments={message.attachments} isUser={isUser} />
           )}
           
-          {/* 思维链卡片 */}
-          {!isUser && message.thoughtSummary && (
-            <ThoughtSummaryCard content={message.thoughtSummary} defaultExpanded={true} />
+          {/* 思维链卡片 - 需求 3.3, 3.4: 重新生成时显示流式思维链 */}
+          {!isUser && (
+            isRegenerating ? (
+              // 重新生成时显示流式思维链
+              regeneratingThought && (
+                <ThoughtSummaryCard content={regeneratingThought} defaultExpanded={true} />
+              )
+            ) : (
+              // 普通状态显示已保存的思维链
+              message.thoughtSummary && (
+                <ThoughtSummaryCard content={message.thoughtSummary} defaultExpanded={true} />
+              )
+            )
           )}
           
-          {/* 消息内容 */}
-          {message.content && (
-            <MessageBubble isUser={isUser}>
-              {renderContent(message.content)}
+          {/* 消息内容 - 需求 1.2, 1.3, 3.1 */}
+          {(displayContent || isRegenerating) && (
+            <MessageBubble isUser={isUser} isRegenerating={isRegenerating}>
+              {isRegenerating ? (
+                // 重新生成状态
+                displayContent ? (
+                  <>
+                    {renderContent(displayContent)}
+                    <TypingCursor />
+                  </>
+                ) : (
+                  <TypingIndicator />
+                )
+              ) : (
+                // 普通状态
+                displayContent && renderContent(displayContent)
+              )}
             </MessageBubble>
           )}
 
@@ -394,15 +542,15 @@ const MessageItem = memo(function MessageItem({
               ${isUser ? 'flex-row-reverse' : 'flex-row'}
             `}
           >
-            {/* 消息操作按钮 */}
+            {/* 消息操作按钮 - 重新生成时隐藏 */}
             <div
               className="flex items-center gap-1"
               style={{
                 ...transitionStyle,
-                opacity: showActions ? 1 : 0,
+                opacity: showActions && !isRegenerating ? 1 : 0,
               }}
             >
-              {showActions && (
+              {showActions && !isRegenerating && (
                 <MessageActions
                   message={message}
                   isUserMessage={isUser}
@@ -413,7 +561,7 @@ const MessageItem = memo(function MessageItem({
               )}
             </div>
 
-            {/* 时间戳 - 悬停显示 */}
+            {/* 时间戳 - 悬停显示，重新生成时隐藏 */}
             <div
               className={`
                 text-xs text-neutral-400 dark:text-neutral-500 px-1
@@ -421,7 +569,7 @@ const MessageItem = memo(function MessageItem({
               `}
               style={{
                 ...transitionStyle,
-                opacity: showTimestamp || isLast ? 1 : 0,
+                opacity: (showTimestamp || isLast) && !isRegenerating ? 1 : 0,
               }}
             >
               {formatTime(message.timestamp)}
@@ -628,6 +776,22 @@ function FileIcon({ className }: { className?: string }) {
   );
 }
 
+function ErrorIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+
+function RetryIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+    </svg>
+  );
+}
+
 // ============ 工具函数 ============
 
 /**
@@ -679,6 +843,212 @@ export function calculateVisibleCount(
   const totalVisible = visibleCount + 2 * overscan;
   // 不能超过总数
   return Math.min(totalVisible, totalMessages);
+}
+
+/**
+ * 计算列表总行数
+ * 用于属性测试验证 - Property 2: 重新生成时列表行数保持不变
+ * 
+ * @param messagesLength - 消息数组长度
+ * @param isSending - 是否正在发送
+ * @param regeneratingMessageId - 正在重新生成的消息 ID
+ * @returns 列表总行数
+ */
+export function calculateTotalCount(
+  messagesLength: number,
+  isSending: boolean,
+  regeneratingMessageId: string | null
+): number {
+  // 只有在发送新消息时才增加行数，重新生成时保持不变
+  const isNewMessageSending = isSending && !regeneratingMessageId;
+  return messagesLength + (isNewMessageSending ? 1 : 0);
+}
+
+/**
+ * 判断消息是否正在重新生成
+ * 用于属性测试验证 - Property 1: 重新生成时内容显示在原位置
+ * 
+ * @param messageId - 消息 ID
+ * @param regeneratingMessageId - 正在重新生成的消息 ID
+ * @param isSending - 是否正在发送
+ * @returns 是否正在重新生成
+ */
+export function isMessageRegenerating(
+  messageId: string,
+  regeneratingMessageId: string | null,
+  isSending: boolean
+): boolean {
+  return messageId === regeneratingMessageId && isSending;
+}
+
+/**
+ * 获取消息显示内容
+ * 用于属性测试验证 - Property 1: 重新生成时内容显示在原位置
+ * 
+ * @param originalContent - 原始消息内容
+ * @param isRegenerating - 是否正在重新生成
+ * @param regeneratingContent - 重新生成中的流式内容
+ * @returns 应该显示的内容
+ */
+export function getDisplayContent(
+  originalContent: string,
+  isRegenerating: boolean,
+  regeneratingContent: string
+): string {
+  return isRegenerating ? regeneratingContent : originalContent;
+}
+
+/**
+ * 判断消息是否应该显示重新生成状态指示器
+ * 用于属性测试验证 - Property 3: 重新生成状态指示器正确管理
+ * 
+ * @param messageId - 消息 ID
+ * @param regeneratingMessageId - 正在重新生成的消息 ID
+ * @param isSending - 是否正在发送
+ * @returns 是否应该显示重新生成状态指示器
+ */
+export function shouldShowRegeneratingIndicator(
+  messageId: string,
+  regeneratingMessageId: string | null,
+  isSending: boolean
+): boolean {
+  // 只有当 isSending=true 且 messageId 匹配时才显示指示器
+  return messageId === regeneratingMessageId && isSending;
+}
+
+/**
+ * 判断重新生成状态指示器是否应该被清除
+ * 用于属性测试验证 - Property 3: 重新生成状态指示器正确管理
+ * 
+ * @param previousIsSending - 之前的发送状态
+ * @param currentIsSending - 当前的发送状态
+ * @param previousRegeneratingId - 之前的重新生成消息 ID
+ * @param currentRegeneratingId - 当前的重新生成消息 ID
+ * @returns 指示器是否被正确清除
+ */
+export function isIndicatorProperlyCleared(
+  previousIsSending: boolean,
+  currentIsSending: boolean,
+  previousRegeneratingId: string | null,
+  currentRegeneratingId: string | null
+): boolean {
+  // 场景 1: 重新生成完成（isSending 从 true 变为 false）
+  if (previousIsSending && !currentIsSending) {
+    // 指示器应该被清除（regeneratingId 应该为 null 或不再匹配）
+    return true;
+  }
+  
+  // 场景 2: regeneratingMessageId 被清除
+  if (previousRegeneratingId !== null && currentRegeneratingId === null) {
+    return true;
+  }
+  
+  // 场景 3: 状态没有变化或正在进行中
+  return false;
+}
+
+// ============ 取消操作相关辅助函数（用于测试） ============
+
+/**
+ * 取消操作结果类型
+ */
+export interface CancelOperationResult {
+  /** 最终消息内容 */
+  finalContent: string;
+  /** 是否保留了部分内容 */
+  hasPartialContent: boolean;
+  /** 是否恢复了原消息 */
+  restoredOriginal: boolean;
+}
+
+/**
+ * 处理取消操作后的内容
+ * 用于属性测试验证 - Property 4: 取消操作正确处理内容
+ * 
+ * 需求 4.1: 流式重新生成过程中取消，停止生成并保留已生成的部分内容
+ * 需求 4.2: 取消操作执行且有部分内容时，将部分内容保存为消息的新内容
+ * 需求 4.3: 没有生成任何内容时取消，恢复显示原消息内容
+ * 
+ * @param originalContent - 原始消息内容
+ * @param partialContent - 取消时已生成的部分内容
+ * @returns 取消操作结果
+ */
+export function handleCancelOperation(
+  originalContent: string,
+  partialContent: string
+): CancelOperationResult {
+  // 判断是否有有效的部分内容（非空字符串）
+  const hasPartialContent = partialContent.length > 0;
+  
+  if (hasPartialContent) {
+    // 需求 4.1, 4.2: 有部分内容时，保留部分内容
+    return {
+      finalContent: partialContent,
+      hasPartialContent: true,
+      restoredOriginal: false,
+    };
+  } else {
+    // 需求 4.3: 没有内容时，恢复原消息
+    return {
+      finalContent: originalContent,
+      hasPartialContent: false,
+      restoredOriginal: true,
+    };
+  }
+}
+
+/**
+ * 验证取消操作后 regeneratingMessageId 是否被正确清除
+ * 用于属性测试验证 - Property 4: 取消操作正确处理内容
+ * 
+ * @param regeneratingMessageIdBeforeCancel - 取消前的 regeneratingMessageId
+ * @param regeneratingMessageIdAfterCancel - 取消后的 regeneratingMessageId
+ * @returns 是否正确清除
+ */
+export function isRegeneratingIdClearedAfterCancel(
+  regeneratingMessageIdBeforeCancel: string | null,
+  regeneratingMessageIdAfterCancel: string | null
+): boolean {
+  // 取消后，regeneratingMessageId 应该被清除为 null
+  return regeneratingMessageIdAfterCancel === null;
+}
+
+/**
+ * 验证取消操作的完整性
+ * 用于属性测试验证 - Property 4: 取消操作正确处理内容
+ * 
+ * @param originalContent - 原始消息内容
+ * @param partialContent - 取消时已生成的部分内容
+ * @param finalContent - 取消后的最终内容
+ * @param isSendingAfterCancel - 取消后的 isSending 状态
+ * @param regeneratingIdAfterCancel - 取消后的 regeneratingMessageId
+ * @returns 取消操作是否正确处理
+ */
+export function validateCancelOperation(
+  originalContent: string,
+  partialContent: string,
+  finalContent: string,
+  isSendingAfterCancel: boolean,
+  regeneratingIdAfterCancel: string | null
+): boolean {
+  // 1. 取消后 isSending 应该为 false
+  if (isSendingAfterCancel) {
+    return false;
+  }
+  
+  // 2. 取消后 regeneratingMessageId 应该为 null
+  if (regeneratingIdAfterCancel !== null) {
+    return false;
+  }
+  
+  // 3. 验证内容处理逻辑
+  if (partialContent.length > 0) {
+    // 有部分内容时，最终内容应该是部分内容
+    return finalContent === partialContent;
+  } else {
+    // 没有部分内容时，最终内容应该是原始内容
+    return finalContent === originalContent;
+  }
 }
 
 export default VirtualMessageList;

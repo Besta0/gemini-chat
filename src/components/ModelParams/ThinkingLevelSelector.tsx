@@ -19,10 +19,14 @@ export interface ThinkingLevelSelectorProps {
   disabled?: boolean;
   /** 显示模式：完整或紧凑 */
   variant?: 'full' | 'compact';
+  /** 模型 ID，用于决定显示哪些选项 */
+  modelId?: string;
 }
 
 /**
  * 思考程度选项配置
+ * gemini-3-pro-preview 只支持 low/high
+ * gemini-3-flash-preview 支持 minimal/low/medium/high
  */
 const THINKING_LEVEL_OPTIONS: Array<{
   value: ThinkingLevel;
@@ -30,9 +34,19 @@ const THINKING_LEVEL_OPTIONS: Array<{
   description: string;
 }> = [
   {
+    value: 'minimal',
+    label: '最少',
+    description: '最快响应，最少思考',
+  },
+  {
     value: 'low',
     label: '低',
     description: '快速响应，适合简单任务',
+  },
+  {
+    value: 'medium',
+    label: '中',
+    description: '平衡速度和深度',
   },
   {
     value: 'high',
@@ -40,6 +54,19 @@ const THINKING_LEVEL_OPTIONS: Array<{
     description: '深度推理，适合复杂问题',
   },
 ];
+
+/**
+ * 根据模型 ID 获取支持的思考等级选项
+ * gemini-3-flash-preview 支持全部四个等级
+ * 其他模型只支持 low/high
+ */
+function getOptionsForModel(modelId?: string): typeof THINKING_LEVEL_OPTIONS {
+  if (modelId?.includes('gemini-3-flash')) {
+    return THINKING_LEVEL_OPTIONS;
+  }
+  // 默认只返回 low 和 high
+  return THINKING_LEVEL_OPTIONS.filter(opt => opt.value === 'low' || opt.value === 'high');
+}
 
 /**
  * 思考程度选择器组件
@@ -50,14 +77,16 @@ export const ThinkingLevelSelector: React.FC<ThinkingLevelSelectorProps> = ({
   onChange,
   disabled = false,
   variant = 'full',
+  modelId,
 }) => {
+  const options = getOptionsForModel(modelId);
   // 紧凑模式：使用简单的按钮组
   if (variant === 'compact') {
     return (
       <div className="flex items-center gap-1">
         <span className="text-xs text-[var(--text-secondary)] mr-1">思考:</span>
         <div className="flex rounded-md overflow-hidden border border-[var(--border-primary)]">
-          {THINKING_LEVEL_OPTIONS.map((option) => (
+          {options.map((option) => (
             <button
               key={option.value}
               type="button"
@@ -88,7 +117,7 @@ export const ThinkingLevelSelector: React.FC<ThinkingLevelSelectorProps> = ({
         思考程度
       </label>
       <div className="flex gap-2">
-        {THINKING_LEVEL_OPTIONS.map((option) => (
+        {options.map((option) => (
           <button
             key={option.value}
             type="button"

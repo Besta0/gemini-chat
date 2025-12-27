@@ -15,7 +15,8 @@ import { VirtualMessageList } from './VirtualMessageList';
 import { MessageInput } from '../MessageInput';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import type { ChatWindowConfig } from '../../types/chatWindow';
-import type { Attachment } from '../../types/models';
+import type { Attachment, ImageGenerationConfig } from '../../types/models';
+import { DEFAULT_IMAGE_GENERATION_CONFIG } from '../../types/models';
 
 // ============ 类型定义 ============
 
@@ -45,6 +46,8 @@ export function ChatArea({ windowId: propWindowId }: ChatAreaProps) {
     activeWindowId,
     isSending,
     streamingText,
+    streamingThought,
+    error,
     sendMessage,
     cancelRequest,
     createSubTopic,
@@ -52,8 +55,10 @@ export function ChatArea({ windowId: propWindowId }: ChatAreaProps) {
     selectSubTopic,
     updateSubTopic,
     updateWindowConfig,
+    updateAdvancedConfig,
     regenerateMessage,
     editMessage,
+    clearError,
   } = useChatWindowStore();
 
   const { apiEndpoint, apiKey } = useSettingsStore();
@@ -136,6 +141,28 @@ export function ChatArea({ windowId: propWindowId }: ChatAreaProps) {
     [currentWindowId, updateWindowConfig]
   );
 
+  // 处理联网搜索切换 - 需求: 联网搜索
+  const handleWebSearchToggle = useCallback(() => {
+    if (!currentWindowId || !currentWindow) return;
+    updateWindowConfig(currentWindowId, {
+      webSearchEnabled: !currentWindow.config.webSearchEnabled,
+    });
+  }, [currentWindowId, currentWindow, updateWindowConfig]);
+
+  // 处理图片配置变更 - 需求: 5.1
+  const handleImageConfigChange = useCallback(
+    (config: Partial<ImageGenerationConfig>) => {
+      if (!currentWindowId) return;
+      updateAdvancedConfig(currentWindowId, {
+        imageConfig: config as ImageGenerationConfig,
+      });
+    },
+    [currentWindowId, updateAdvancedConfig]
+  );
+
+  // 获取当前图片配置 - 需求: 5.2
+  const currentImageConfig: ImageGenerationConfig = currentWindow?.config.advancedConfig?.imageConfig || DEFAULT_IMAGE_GENERATION_CONFIG;
+
   // 打开配置面板
   const handleOpenConfig = useCallback(() => {
     setIsConfigPanelOpen(true);
@@ -179,6 +206,45 @@ export function ChatArea({ windowId: propWindowId }: ChatAreaProps) {
     [currentWindowId, currentWindow, editMessage, regenerateMessage]
   );
 
+  // 处理重试（错误后重新发送最后一条消息）
+  const handleRetry = useCallback(async () => {
+    if (!currentWindowId || !currentWindow || !currentSubTopic) return;
+    
+    // 清除错误
+    clearError();
+    
+    // 找到最后一条AI消息（如果有的话）或者最后一条用户消息
+    const messages = currentSubTopic.messages;
+    
+    if (messages.length === 0) return;
+    
+    const lastMessage = messages[messages.length - 1];
+    
+    if (lastMessage.role === 'model') {
+      // 如果最后一条是AI消息，重新生成它
+      await regenerateMessage(currentWindowId, currentWindow.activeSubTopicId, lastMessage.id);
+    } else {
+      // 如果最后一条是用户消息（说明AI还没回复就出错了）
+      // 重新发送这条用户消息
+      await sendMessage(
+        currentWindowId,
+        currentWindow.activeSubTopicId,
+        lastMessage.content,
+        lastMessage.attachments,
+        {
+          endpoint: apiEndpoint,
+          apiKey: apiKey,
+          model: currentWindow.config.model,
+        }
+      );
+    }
+  }, [currentWindowId, currentWindow, currentSubTopic, clearError, regenerateMessage, sendMessage, apiEndpoint, apiKey]);
+
+  // 处理关闭错误提示
+  const handleDismissError = useCallback(() => {
+    clearError();
+  }, [clearError]);
+
 
 
   // 渲染 Markdown 内容
@@ -215,17 +281,22 @@ export function ChatArea({ windowId: propWindowId }: ChatAreaProps) {
         onRename={handleRenameSubTopic}
       />
 
-      {/* 虚拟滚动消息列表 - Requirements: 1.1, 5.2, 5.3 */}
+      {/* 虚拟滚动消息列表 - Requirements: 1.1, 5.2, 5.3, 3.3, 3.4 */}
       <VirtualMessageList
         messages={currentSubTopic?.messages || []}
         isSending={isSending}
         streamingText={streamingText}
+        streamingThought={streamingThought}
+        error={error}
+        onRetry={handleRetry}
+        onDismissError={handleDismissError}
         renderContent={renderContent}
         onRegenerateMessage={handleRegenerateMessage}
         onEditMessage={handleEditMessage}
+        regeneratingMessageId={regeneratingMessageId}
       />
 
-      {/* 消息输入 - Requirements: 5.1, 5.4 */}
+      {/* 消息输入 - Requirements: 5.1, 5.4, 联网搜索, 图片配置 */}
       {/* 注意：已移除 ModelParamsBar 组件 - Requirements: 7.5 */}
       <MessageInput
         onSend={handleSendMessage}
@@ -237,6 +308,11 @@ export function ChatArea({ windowId: propWindowId }: ChatAreaProps) {
             ? '请先在设置中配置 API 密钥'
             : '输入消息... (Enter 发送, Shift+Enter 换行)'
         }
+        webSearchEnabled={currentWindow.config.webSearchEnabled}
+        onWebSearchToggle={handleWebSearchToggle}
+        currentModel={currentWindow.config.model}
+        imageConfig={currentImageConfig}
+        onImageConfigChange={handleImageConfigChange}
       />
 
       {/* 毛玻璃配置面板 - Requirements: 6.4, 6.5 */}

@@ -69,6 +69,7 @@ export function ModelParamsBar({ modelId, advancedConfig, onConfigChange }: Mode
             value={advancedConfig?.thinkingLevel || 'high'}
             onChange={handleThinkingLevelChange}
             variant="compact"
+            modelId={modelId}
           />
         )}
 

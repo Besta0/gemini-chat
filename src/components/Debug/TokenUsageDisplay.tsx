@@ -1,19 +1,29 @@
 /**
  * Token 使用量显示组件
- * 需求: 7.2, 7.3
+ * 需求: 7.2, 7.3, 2.1, 2.2, 2.3, 2.4
  * 
  * 显示单条消息的 Token 使用量和对话累计 Token 使用量
+ * 支持显示思维链 Token（紫色样式）
  */
 
 
 import type { TokenUsage } from '../../stores/debug';
 import { formatTokenCount, isValidTokenUsage } from '../../services/tokenUsage';
 
+/**
+ * 扩展的 Token 使用量类型，支持思维链 Token
+ * 需求: 2.1
+ */
+export interface ExtendedTokenUsage extends TokenUsage {
+  /** 思维链 Token 数 */
+  thoughtsTokens?: number;
+}
+
 // ============ 类型定义 ============
 
 interface TokenUsageDisplayProps {
-  /** Token 使用量数据 */
-  tokenUsage: TokenUsage | null | undefined;
+  /** Token 使用量数据（支持扩展的思维链 Token） */
+  tokenUsage: ExtendedTokenUsage | TokenUsage | null | undefined;
   /** 是否紧凑模式 */
   compact?: boolean;
   /** 自定义类名 */
@@ -22,7 +32,7 @@ interface TokenUsageDisplayProps {
 
 interface TokenUsageSummaryProps {
   /** 累计 Token 使用量 */
-  totalUsage: TokenUsage;
+  totalUsage: ExtendedTokenUsage | TokenUsage;
   /** 自定义类名 */
   className?: string;
 }
@@ -31,7 +41,7 @@ interface TokenUsageSummaryProps {
 
 /**
  * Token 使用量显示
- * 需求: 7.2
+ * 需求: 7.2, 2.1, 2.2, 2.3, 2.4
  */
 export function TokenUsageDisplay({
   tokenUsage,
@@ -50,19 +60,32 @@ export function TokenUsageDisplay({
     );
   }
 
+  // 获取思维链 Token 数（如果存在）
+  const thoughtsTokens = 'thoughtsTokens' in tokenUsage ? tokenUsage.thoughtsTokens : undefined;
+  const hasThoughtsTokens = thoughtsTokens !== undefined && thoughtsTokens > 0;
+
   // 紧凑模式
+  // 需求: 2.4 - 紧凑模式显示总 Token（包括思维链 Token）
   if (compact) {
     return (
       <div className={`flex items-center gap-2 text-sm ${className}`}>
         <TokenIcon />
         <span className="text-neutral-600 dark:text-neutral-400">
           {formatTokenCount(tokenUsage.totalTokens)} tokens
+          {hasThoughtsTokens && (
+            <span className="text-purple-600 dark:text-purple-400 ml-1">
+              (+{formatTokenCount(thoughtsTokens)} 思考)
+            </span>
+          )}
         </span>
       </div>
     );
   }
 
   // 完整模式
+  // 需求: 2.1 - 显示输入、输出、思维链、总计四项 Token
+  // 需求: 2.2 - 思维链 Token 使用紫色样式
+  // 需求: 2.3 - 仅当 thoughtsTokens > 0 时显示思维链行
   return (
     <div className={`${className}`}>
       <div className="flex items-center gap-2 mb-2">
@@ -72,7 +95,7 @@ export function TokenUsageDisplay({
         </span>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className={`grid gap-4 ${hasThoughtsTokens ? 'grid-cols-4' : 'grid-cols-3'}`}>
         <TokenStatItem
           label="输入"
           value={tokenUsage.promptTokens}
@@ -83,6 +106,14 @@ export function TokenUsageDisplay({
           value={tokenUsage.completionTokens}
           color="text-green-600 dark:text-green-400"
         />
+        {/* 需求: 2.2, 2.3 - 思维链 Token 显示（紫色样式，仅当 > 0 时显示） */}
+        {hasThoughtsTokens && (
+          <TokenStatItem
+            label="思考"
+            value={thoughtsTokens}
+            color="text-purple-600 dark:text-purple-400"
+          />
+        )}
         <TokenStatItem
           label="总计"
           value={tokenUsage.totalTokens}
@@ -98,7 +129,7 @@ export function TokenUsageDisplay({
 
 /**
  * 对话累计 Token 使用量显示
- * 需求: 7.3
+ * 需求: 7.3, 2.1, 2.2, 2.3
  */
 export function TokenUsageSummary({
   totalUsage,
@@ -107,6 +138,10 @@ export function TokenUsageSummary({
   if (!isValidTokenUsage(totalUsage)) {
     return null;
   }
+
+  // 获取思维链 Token 数（如果存在）
+  const thoughtsTokens = 'thoughtsTokens' in totalUsage ? totalUsage.thoughtsTokens : undefined;
+  const hasThoughtsTokens = thoughtsTokens !== undefined && thoughtsTokens > 0;
 
   return (
     <div className={`p-4 bg-neutral-50 dark:bg-neutral-800 rounded-lg ${className}`}>
@@ -132,6 +167,18 @@ export function TokenUsageSummary({
               {formatTokenCount(totalUsage.completionTokens)}
             </p>
           </div>
+          {/* 需求: 2.2, 2.3 - 思维链 Token 显示（紫色样式，仅当 > 0 时显示） */}
+          {hasThoughtsTokens && (
+            <>
+              <div className="text-neutral-300 dark:text-neutral-600">+</div>
+              <div className="text-center">
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-1">思考</p>
+                <p className="text-lg font-semibold text-purple-600 dark:text-purple-400">
+                  {formatTokenCount(thoughtsTokens)}
+                </p>
+              </div>
+            </>
+          )}
           <div className="text-neutral-300 dark:text-neutral-600">=</div>
           <div className="text-center">
             <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-1">总计</p>

@@ -11,7 +11,7 @@
  */
 export interface ThinkingConfig {
   /** 思考深度级别（Gemini 3 系列） */
-  thinkingLevel?: 'low' | 'high';
+  thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high';
   /** 思考预算（Gemini 2.5 系列，token 数量，-1 为动态） */
   thinkingBudget?: number;
   /** 是否包含思维链 */
@@ -51,6 +51,23 @@ export interface ImageConfig {
   imageSize: string;
 }
 
+// ============ 工具相关类型 ============
+
+/**
+ * Google 搜索工具配置
+ * 需求: 联网搜索功能
+ */
+export interface GoogleSearchTool {
+  /** Google 搜索工具（空对象表示启用） */
+  googleSearch: Record<string, never>;
+}
+
+/**
+ * Gemini API 工具配置
+ * 需求: 联网搜索功能
+ */
+export type GeminiTool = GoogleSearchTool;
+
 /**
  * Gemini API 请求体
  * 注意: thinkingConfig 已移至 generationConfig 内部
@@ -62,6 +79,8 @@ export interface GeminiRequest {
   systemInstruction?: GeminiContent;
   /** 图片生成配置（Gemini 3 Pro Image） */
   imageConfig?: ImageConfig;
+  /** 工具配置（如 Google 搜索） */
+  tools?: GeminiTool[];
 }
 
 /**
@@ -184,13 +203,40 @@ export interface UsageMetadata {
 // ============ 流式响应相关类型 ============
 
 /**
+ * 流式响应块的 Token 使用量元数据
+ * 需求: 1.1
+ */
+export interface StreamUsageMetadata {
+  /** 输入 Token 数 */
+  promptTokenCount: number;
+  /** 输出 Token 数（候选响应） */
+  candidatesTokenCount: number;
+  /** 总 Token 数 */
+  totalTokenCount: number;
+  /** 思维链 Token 数 */
+  thoughtsTokenCount?: number;
+  /** 输入 Token 详情 */
+  promptTokensDetails?: {
+    modality: string;
+    tokenCount: number;
+  }[];
+}
+
+/**
  * 流式响应块
+ * 需求: 1.1
  */
 export interface StreamChunk {
   candidates?: {
     content?: GeminiContent;
     finishReason?: string;
   }[];
+  /** Token 使用量元数据 */
+  usageMetadata?: StreamUsageMetadata;
+  /** 模型版本 */
+  modelVersion?: string;
+  /** 响应 ID */
+  responseId?: string;
 }
 
 // ============ 常量定义 ============

@@ -103,12 +103,14 @@ function completeDebugRecord(
  * @param startTime - 请求开始时间
  * @param error - 错误信息
  * @param statusCode - HTTP 状态码（可选）
+ * @param rawResponse - 原始响应内容（可选，用于调试）
  */
 function failDebugRecord(
   requestId: string,
   startTime: number,
   error: string,
-  statusCode?: number
+  statusCode?: number,
+  rawResponse?: string
 ): void {
   const debugStore = useDebugStore.getState();
   
@@ -118,10 +120,22 @@ function failDebugRecord(
   
   const duration = Date.now() - startTime;
   
+  // 尝试解析原始响应为 JSON，便于在调试面板中格式化显示
+  let response: unknown = rawResponse;
+  if (rawResponse) {
+    try {
+      response = JSON.parse(rawResponse);
+    } catch {
+      // 如果不是有效的 JSON，保持原始字符串
+      response = rawResponse;
+    }
+  }
+  
   debugStore.updateRequestRecord(requestId, {
     statusCode,
     error,
     duration,
+    response, // 保存原始响应内容
   });
 }
 
@@ -232,7 +246,7 @@ export function buildRequestUrl(config: ApiConfig, stream: boolean = true): stri
 
 /**
  * 构建 Gemini API 请求体
- * 需求: 2.4, 3.2, 3.8, 4.2, 5.6, 12.3
+ * 需求: 2.4, 3.2, 3.8, 4.2, 5.6, 12.3, 联网搜索
  * 
  * @param contents - 消息内容数组
  * @param generationConfig - 生成配置（可选）
@@ -240,6 +254,7 @@ export function buildRequestUrl(config: ApiConfig, stream: boolean = true): stri
  * @param systemInstruction - 系统指令（可选）
  * @param advancedConfig - 高级参数配置（可选）
  * @param modelId - 模型 ID（可选，用于确定思考配置类型）
+ * @param webSearchEnabled - 是否启用联网搜索（可选）
  * @returns 符合 Gemini API 格式的请求体
  */
 export function buildRequestBody(
@@ -248,7 +263,8 @@ export function buildRequestBody(
   safetySettings?: SafetySetting[],
   systemInstruction?: string,
   advancedConfig?: ModelAdvancedConfig,
-  modelId?: string
+  modelId?: string,
+  webSearchEnabled?: boolean
 ): GeminiRequest {
   const request: GeminiRequest = {
     contents: applyMediaResolution(contents, advancedConfig?.mediaResolution),
@@ -334,6 +350,12 @@ export function buildRequestBody(
     }
   }
 
+  // 添加联网搜索工具配置
+  // 需求: 联网搜索功能
+  if (webSearchEnabled) {
+    request.tools = [{ googleSearch: {} }];
+  }
+
   return request;
 }
 
@@ -394,7 +416,7 @@ export function buildThinkingConfigForModel(
  * @returns 思考配置对象
  * @deprecated 请使用 buildThinkingConfigForModel 函数
  */
-export function buildThinkingConfig(thinkingLevel: 'low' | 'high'): ThinkingConfig {
+export function buildThinkingConfig(thinkingLevel: 'minimal' | 'low' | 'medium' | 'high'): ThinkingConfig {
   return {
     thinkingLevel: thinkingLevel,
   };
@@ -515,6 +537,28 @@ export function extractImagesFromChunk(chunk: StreamChunk): ImageExtractionResul
   }
   
   return images;
+}
+
+/**
+ * 从流式响应块中提取 Token 使用量
+ * 需求: 1.2, 1.5
+ * 
+ * @param chunk - 流式响应块
+ * @returns Token 使用量对象，如果没有数据则返回 null
+ */
+export function extractTokenUsage(chunk: StreamChunk): import('../types/models').MessageTokenUsage | null {
+  if (!chunk.usageMetadata) {
+    return null;
+  }
+  
+  const { promptTokenCount, candidatesTokenCount, totalTokenCount, thoughtsTokenCount } = chunk.usageMetadata;
+  
+  return {
+    promptTokens: promptTokenCount || 0,
+    completionTokens: candidatesTokenCount || 0,
+    thoughtsTokens: thoughtsTokenCount || 0,
+    totalTokens: totalTokenCount || 0,
+  };
 }
 
 /**
@@ -682,6 +726,8 @@ export async function sendMessage(
   // 用于追踪已接收的部分响应
   let fullText = '';
   let ttfb: number | undefined;
+  // 收集所有原始响应块，用于调试面板显示完整的上游响应
+  const rawResponseChunks: unknown[] = [];
 
   try {
     const response = await fetch(url, {
@@ -715,23 +761,13 @@ export async function sendMessage(
       // 需求: 2.4 - 输出错误日志
       apiLogger.error('API 请求失败', { status: response.status, message: errorMessage });
 
-      // 需求: 6.3 - 记录失败
+      // 需求: 6.3 - 记录失败，同时保存原始响应内容
       if (debugInfo) {
-        failDebugRecord(debugInfo.requestId, debugInfo.startTime, errorMessage, response.status);
+        failDebugRecord(debugInfo.requestId, debugInfo.startTime, errorMessage, response.status, errorText);
       }
 
-      switch (response.status) {
-        case 401:
-          throw new GeminiApiError('API 密钥无效', 401, 'UNAUTHORIZED');
-        case 429:
-          throw new GeminiApiError('请求过于频繁，请稍后重试', 429, 'RATE_LIMITED');
-        case 500:
-        case 502:
-        case 503:
-          throw new GeminiApiError('服务暂时不可用，请稍后重试', response.status, 'SERVER_ERROR');
-        default:
-          throw new GeminiApiError(errorMessage, response.status);
-      }
+      // 直接使用原始错误消息，让用户看到上游返回的具体错误
+      throw new GeminiApiError(errorMessage, response.status);
     }
 
     // 处理流式响应
@@ -774,6 +810,8 @@ export async function sendMessage(
       for (const line of lines) {
         const chunk = parseSSELine(line);
         if (chunk) {
+          // 收集原始响应块用于调试
+          rawResponseChunks.push(chunk);
           const text = extractTextFromChunk(chunk);
           if (text) {
             fullText += text;
@@ -787,6 +825,8 @@ export async function sendMessage(
     if (buffer) {
       const chunk = parseSSELine(buffer);
       if (chunk) {
+        // 收集原始响应块用于调试
+        rawResponseChunks.push(chunk);
         const text = extractTextFromChunk(chunk);
         if (text) {
           fullText += text;
@@ -797,9 +837,9 @@ export async function sendMessage(
 
     apiLogger.info('流式消息请求完成', { responseLength: fullText.length });
     
-    // 需求: 6.3 - 记录成功
+    // 需求: 6.3 - 记录成功，保存完整的原始响应数据
     if (debugInfo) {
-      completeDebugRecord(debugInfo.requestId, debugInfo.startTime, 200, { text: fullText }, ttfb);
+      completeDebugRecord(debugInfo.requestId, debugInfo.startTime, 200, rawResponseChunks, ttfb);
     }
     
     return fullText;
@@ -876,8 +916,8 @@ export class GeminiRequestCancelledWithThoughtsError extends Error {
 }
 
 /**
- * 发送消息到 Gemini API 并处理流式响应（支持思维链提取）
- * 需求: 4.3, 5.2, 5.4, 2.2, 2.3
+ * 发送消息到 Gemini API 并处理流式响应（支持思维链提取和 Token 统计）
+ * 需求: 4.3, 5.2, 5.4, 2.2, 2.3, 3.1, 1.2, 联网搜索
  * 
  * @param contents - 消息内容数组
  * @param config - API 配置
@@ -887,7 +927,9 @@ export class GeminiRequestCancelledWithThoughtsError extends Error {
  * @param onChunk - 接收文本块的回调函数
  * @param advancedConfig - 高级参数配置（可选）
  * @param signal - AbortSignal 用于取消请求（可选）
- * @returns 包含文本和思维链的结果对象
+ * @param webSearchEnabled - 是否启用联网搜索（可选）
+ * @param onThoughtChunk - 接收思维链块的回调函数（可选）- 需求: 3.1
+ * @returns 包含文本、思维链、Token 使用量等的结果对象
  */
 export async function sendMessageWithThoughts(
   contents: GeminiContent[],
@@ -897,10 +939,12 @@ export async function sendMessageWithThoughts(
   systemInstruction?: string,
   onChunk?: (text: string) => void,
   advancedConfig?: ModelAdvancedConfig,
-  signal?: AbortSignal
-): Promise<{ text: string; thoughtSummary?: string; thoughtSignature?: string; images?: ImageExtractionResult[]; duration?: number; ttfb?: number }> {
+  signal?: AbortSignal,
+  webSearchEnabled?: boolean,
+  onThoughtChunk?: (thought: string) => void
+): Promise<{ text: string; thoughtSummary?: string; thoughtSignature?: string; images?: ImageExtractionResult[]; duration?: number; ttfb?: number; tokenUsage?: import('../types/models').MessageTokenUsage }> {
   // 需求: 2.2 - 输出请求日志
-  apiLogger.info('发送流式消息请求（含思维链）', { model: config.model, messageCount: contents.length });
+  apiLogger.info('发送流式消息请求（含思维链）', { model: config.model, messageCount: contents.length, webSearchEnabled });
 
   // 验证 API 配置
   const validation = validateApiEndpoint(config.endpoint);
@@ -914,9 +958,9 @@ export async function sendMessageWithThoughts(
     throw new GeminiApiError('API 密钥不能为空');
   }
 
-  // 构建请求，传入模型 ID 以正确构建思考配置
+  // 构建请求，传入模型 ID 以正确构建思考配置，以及联网搜索配置
   const url = buildRequestUrl(config, true);
-  const body = buildRequestBody(contents, generationConfig, safetySettings, systemInstruction, advancedConfig, config.model);
+  const body = buildRequestBody(contents, generationConfig, safetySettings, systemInstruction, advancedConfig, config.model, webSearchEnabled);
 
   // 需求: 2.3 - 输出 API 调用日志
   apiLogger.debug('API 请求参数', {
@@ -935,6 +979,9 @@ export async function sendMessageWithThoughts(
   let lastThoughtSignature: string | undefined; // 用于画图模型连续对话
   const allImages: ImageExtractionResult[] = [];
   let ttfb: number | undefined;
+  let lastTokenUsage: import('../types/models').MessageTokenUsage | null = null; // 用于存储最后一个 chunk 的 Token 使用量
+  // 收集所有原始响应块，用于调试面板显示完整的上游响应
+  const rawResponseChunks: unknown[] = [];
 
   try {
     const response = await fetch(url, {
@@ -965,23 +1012,13 @@ export async function sendMessageWithThoughts(
         // 使用默认错误消息
       }
 
-      // 需求: 6.3 - 记录失败
+      // 需求: 6.3 - 记录失败，同时保存原始响应内容
       if (debugInfo) {
-        failDebugRecord(debugInfo.requestId, debugInfo.startTime, errorMessage, response.status);
+        failDebugRecord(debugInfo.requestId, debugInfo.startTime, errorMessage, response.status, errorText);
       }
 
-      switch (response.status) {
-        case 401:
-          throw new GeminiApiError('API 密钥无效', 401, 'UNAUTHORIZED');
-        case 429:
-          throw new GeminiApiError('请求过于频繁，请稍后重试', 429, 'RATE_LIMITED');
-        case 500:
-        case 502:
-        case 503:
-          throw new GeminiApiError('服务暂时不可用，请稍后重试', response.status, 'SERVER_ERROR');
-        default:
-          throw new GeminiApiError(errorMessage, response.status);
-      }
+      // 直接使用原始错误消息，让用户看到上游返回的具体错误
+      throw new GeminiApiError(errorMessage, response.status);
     }
 
     // 处理流式响应
@@ -1035,6 +1072,8 @@ export async function sendMessageWithThoughts(
       for (const line of lines) {
         const chunk = parseSSELine(line);
         if (chunk) {
+          // 收集原始响应块用于调试
+          rawResponseChunks.push(chunk);
           // 使用 extractThoughtSummary 分离文本和思维链
           const extracted = extractThoughtSummary(chunk);
           if (extracted) {
@@ -1044,6 +1083,8 @@ export async function sendMessageWithThoughts(
             }
             if (extracted.thought) {
               fullThought += extracted.thought;
+              // 需求: 3.1 - 调用思维链回调
+              onThoughtChunk?.(extracted.thought);
             }
             // 提取 thoughtSignature（用于画图模型连续对话）
             if (extracted.thoughtSignature) {
@@ -1055,6 +1096,11 @@ export async function sendMessageWithThoughts(
           if (images.length > 0) {
             allImages.push(...images);
           }
+          // 需求: 1.2 - 从每个 chunk 提取 Token 使用量（最后一个有效的会被保留）
+          const tokenUsage = extractTokenUsage(chunk);
+          if (tokenUsage) {
+            lastTokenUsage = tokenUsage;
+          }
         }
       }
     }
@@ -1063,6 +1109,8 @@ export async function sendMessageWithThoughts(
     if (buffer) {
       const chunk = parseSSELine(buffer);
       if (chunk) {
+        // 收集原始响应块用于调试
+        rawResponseChunks.push(chunk);
         const extracted = extractThoughtSummary(chunk);
         if (extracted) {
           if (extracted.text) {
@@ -1071,6 +1119,8 @@ export async function sendMessageWithThoughts(
           }
           if (extracted.thought) {
             fullThought += extracted.thought;
+            // 需求: 3.1 - 调用思维链回调
+            onThoughtChunk?.(extracted.thought);
           }
           // 提取 thoughtSignature（用于画图模型连续对话）
           if (extracted.thoughtSignature) {
@@ -1082,6 +1132,11 @@ export async function sendMessageWithThoughts(
         if (images.length > 0) {
           allImages.push(...images);
         }
+        // 需求: 1.2 - 从最后一个 chunk 提取 Token 使用量
+        const tokenUsage = extractTokenUsage(chunk);
+        if (tokenUsage) {
+          lastTokenUsage = tokenUsage;
+        }
       }
     }
 
@@ -1089,6 +1144,7 @@ export async function sendMessageWithThoughts(
       responseLength: fullText.length, 
       hasThought: !!fullThought,
       imageCount: allImages.length,
+      hasTokenUsage: !!lastTokenUsage,
     });
 
     // 需求: 6.3 - 记录成功
@@ -1096,11 +1152,8 @@ export async function sendMessageWithThoughts(
     const duration = debugInfo ? Date.now() - debugInfo.startTime : undefined;
     
     if (debugInfo) {
-      completeDebugRecord(debugInfo.requestId, debugInfo.startTime, 200, { 
-        text: fullText,
-        thoughtSummary: fullThought || undefined,
-        imageCount: allImages.length,
-      }, ttfb);
+      // 保存完整的原始响应数据，而不是处理后的简化内容
+      completeDebugRecord(debugInfo.requestId, debugInfo.startTime, 200, rawResponseChunks, ttfb);
     }
 
     return {
@@ -1110,6 +1163,7 @@ export async function sendMessageWithThoughts(
       images: allImages.length > 0 ? allImages : undefined,
       duration,
       ttfb,
+      tokenUsage: lastTokenUsage || undefined,
     };
   } catch (error) {
     // 需求: 5.2 - 处理 AbortError 异常
@@ -1247,23 +1301,13 @@ export async function sendMessageNonStreaming(
       // 需求: 2.4 - 输出错误日志
       apiLogger.error('API 请求失败', { status: response.status, message: errorMessage });
 
-      // 需求: 6.3 - 记录失败
+      // 需求: 6.3 - 记录失败，同时保存原始响应内容
       if (debugInfo) {
-        failDebugRecord(debugInfo.requestId, debugInfo.startTime, errorMessage, response.status);
+        failDebugRecord(debugInfo.requestId, debugInfo.startTime, errorMessage, response.status, errorText);
       }
 
-      switch (response.status) {
-        case 401:
-          throw new GeminiApiError('API 密钥无效', 401, 'UNAUTHORIZED');
-        case 429:
-          throw new GeminiApiError('请求过于频繁，请稍后重试', 429, 'RATE_LIMITED');
-        case 500:
-        case 502:
-        case 503:
-          throw new GeminiApiError('服务暂时不可用，请稍后重试', response.status, 'SERVER_ERROR');
-        default:
-          throw new GeminiApiError(errorMessage, response.status);
-      }
+      // 直接使用原始错误消息，让用户看到上游返回的具体错误
+      throw new GeminiApiError(errorMessage, response.status);
     }
 
     // 解析非流式响应
@@ -1271,9 +1315,9 @@ export async function sendMessageNonStreaming(
     
     if (!responseData.candidates || responseData.candidates.length === 0) {
       apiLogger.warn('API 响应无候选内容');
-      // 需求: 6.3 - 记录成功（空响应）
+      // 需求: 6.3 - 记录成功，保存完整的原始响应
       if (debugInfo) {
-        completeDebugRecord(debugInfo.requestId, debugInfo.startTime, 200, { text: '' }, ttfb);
+        completeDebugRecord(debugInfo.requestId, debugInfo.startTime, 200, responseData, ttfb);
       }
       return '';
     }
@@ -1281,9 +1325,9 @@ export async function sendMessageNonStreaming(
     const candidate = responseData.candidates[0];
     if (!candidate || !candidate.content || !candidate.content.parts) {
       apiLogger.warn('API 响应内容为空');
-      // 需求: 6.3 - 记录成功（空响应）
+      // 需求: 6.3 - 记录成功，保存完整的原始响应
       if (debugInfo) {
-        completeDebugRecord(debugInfo.requestId, debugInfo.startTime, 200, { text: '' }, ttfb);
+        completeDebugRecord(debugInfo.requestId, debugInfo.startTime, 200, responseData, ttfb);
       }
       return '';
     }
@@ -1295,9 +1339,9 @@ export async function sendMessageNonStreaming(
 
     apiLogger.info('非流式消息请求完成', { responseLength: result.length });
     
-    // 需求: 6.3 - 记录成功
+    // 需求: 6.3 - 记录成功，保存完整的原始响应数据
     if (debugInfo) {
-      completeDebugRecord(debugInfo.requestId, debugInfo.startTime, 200, { text: result }, ttfb);
+      completeDebugRecord(debugInfo.requestId, debugInfo.startTime, 200, responseData, ttfb);
     }
     
     return result;

@@ -394,6 +394,7 @@ export function InlineConfigPanel({
               value={currentThinkingLevel}
               onChange={handleThinkingLevelChange}
               variant="full"
+              modelId={config.model}
             />
           )}
           {thinkingConfigType === 'budget' && thinkingBudgetConfig && (
